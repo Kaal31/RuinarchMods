@@ -272,12 +272,19 @@ namespace RuinarchPlus.Phase5
 				.OrderBy(c => c.relationshipContainer.GetTotalOpinion(ruler))
 				.ThenByDescending(c => (c.traitContainer.HasTrait("Ambitious") ? 1 : 0) + (c.traitContainer.HasTrait("Authoritative") ? 1 : 0))
 				.FirstOrDefault();
-			st.CalmUntil = Now + 24 * TicksPerHour;
 			if (leader == null)
 			{
+				// Those against the ruler are asleep, hurt or away: try again next hour (a day's
+				// wait would fall on the same hour of the night again).
+				if (Famine.Villagers(s).Any(c => c != ruler && c.faction == s.owner && c.relationshipContainer.GetTotalOpinion(ruler) < 0))
+				{
+					return;
+				}
+				st.CalmUntil = Now + 24 * TicksPerHour;
 				Phase2.Curfew.Note("{0} seethes, but nobody in it stands up to {1}.", s, ruler);
 				return;
 			}
+			st.CalmUntil = Now + 24 * TicksPerHour;
 			Uprising u = new Uprising
 			{
 				Leader = leader,

@@ -133,6 +133,14 @@ namespace RuinarchDebug
 			return m == null ? (bool?)null : m.Invoke(null, new object[] { settlement }) is bool b && b;
 		}
 
+		/// <summary>What the famine rule sees in <paramref name="village"/>: starving villagers of
+		/// those inside it; (-1, -1) without Ruinarch+.</summary>
+		internal static (int starving, int villagers) FamineCount(NPCSettlement village)
+		{
+			object[] args = { village, 0 };
+			return Plus?.GetType("RuinarchPlus.Phase5.Famine")?.GetMethod("Starving", Any)?.Invoke(null, args) is int n ? (n, (int)args[1]) : (-1, -1);
+		}
+
 		private static Type HuntersType => Plus?.GetType("RuinarchPlus.Phase5.Hunters");
 		private static Type TradersType => Plus?.GetType("RuinarchPlus.Phase5.Traders");
 

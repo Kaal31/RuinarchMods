@@ -555,6 +555,11 @@ namespace RuinarchDebug
 			}
 			if (pit == null)
 			{
+				if (village.owner == null)
+				{
+					Skip("instant-build fallback", $"{village.name} died out while waiting (no owning faction; residents alive={village.residents.Count(r => r != null && !r.isDead)})");
+					yield break;
+				}
 				pit = Guard("instant-build fallback", () => PlusBridge.InstantBuild(village));
 				Log(pit != null ? "  fallback: instant-built a Mass Grave to continue the suite" : "  fallback instant build failed");
 				if (pit == null)
@@ -893,8 +898,16 @@ namespace RuinarchDebug
 			yield return WaitGameHours(1f, null);
 			float collapsed = PlusBridge.MigrationMultiplier(village, out string collapseWhy);
 			int gainCollapsed = Gain(true);
-			Log($"  killed {doomed.Count}; alive={village.residents.Count(r => r != null && !r.isDead)} emptyHomes={village.GetNumberOfUnoccupiedStructure(STRUCTURE_TYPE.DWELLING)}");
-			Check("a village that lost most of its people draws no settlers", () =>
+			int empty = village.GetNumberOfUnoccupiedStructure(STRUCTURE_TYPE.DWELLING);
+			int homes = village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> dwellings) ? dwellings.Count : 0;
+			Log($"  killed {doomed.Count}; alive={village.residents.Count(r => r != null && !r.isDead)} emptyHomes={empty} of {homes}");
+			// The rule: more homes empty beyond the two spare than lived in. A village with few
+			// homes (couples share one) can lose most of its people without meeting it.
+			if (empty - 2 <= homes - empty)
+			{
+				Skip("a village that lost most of its people draws no settlers", $"{village.name} has too few homes: {empty} of {homes} empty; x{collapsed:0.##} {collapseWhy}");
+			}
+			else Check("a village that lost most of its people draws no settlers", () =>
 				(gainCollapsed == 0 && collapseWhy != null, $"gain {gainCollapsed} (vanilla {vanilla}); x{collapsed:0.##} {collapseWhy}"));
 		}
 
@@ -1431,18 +1444,30 @@ namespace RuinarchDebug
 			Log($"famine test village: {Describe(village)} villagers={people.Count} refuge={hasRefuge(village)}");
 			yield return CaptivesDoNotStarveTheVillage(village, people);
 			PlusBridge.SetConfig("famineLeaveChance", 100);
-			// Hunters sent out are left to eat: kept starving, they would only ever look for
-			// food and never hunt.
+			// Hunting off: hunters (HuntSuite) feed a hungry village before it falls into famine,
+			// which is what they are for, and would keep this village out of it.
+			PlusBridge.SetConfig("huntingEnabled", false);
 			Action starve = () =>
 			{
-				foreach (Character c in people.Where(c => !c.isDead && c.homeSettlement == village && !PlusBridge.IsHunting(c)))
+				foreach (Character c in people.Where(c => !c.isDead && c.homeSettlement == village))
 				{
 					c.needsComponent.SetFullness(5f);
 				}
 			};
 
 			float start = GameHours;
-			yield return WaitGameHours(20f, () => { starve(); return PlusBridge.InFamine(village) == true; });
+			int loggedHour = -1;
+			yield return WaitGameHours(20f, () =>
+			{
+				starve();
+				if ((int)(GameHours - start) != loggedHour)
+				{
+					loggedHour = (int)(GameHours - start);
+					(int starving, int inside) = PlusBridge.FamineCount(village);
+					Log($"  hour {loggedHour}: starving {starving} of {inside} inside; residents {string.Join(" ", people.Select(c => $"{c.name}[{(c.isDead ? "dead" : "")}{(c.homeSettlement == village ? "" : " moved")}{(c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(village) ? "" : " away")} {c.needsComponent.fullness:F0}]"))}");
+				}
+				return PlusBridge.InFamine(village) == true;
+			});
 			Check("a village whose people go hungry falls into famine", () =>
 				(PlusBridge.InFamine(village) == true, $"famine={PlusBridge.InFamine(village)} after {GameHours - start:F1}h"));
 			Check("the famine is announced", () => (ModsLogHas($"Famine in {village.name}"), "mods.log"));
@@ -1495,6 +1520,7 @@ namespace RuinarchDebug
 			Check("fed again, the famine ends", () =>
 				(PlusBridge.InFamine(village) == false && ModsLogHas($"The famine in {village.name} is over"), $"famine={PlusBridge.InFamine(village)}"));
 			PlusBridge.SetConfig("famineLeaveChance", 25);
+			PlusBridge.SetConfig("huntingEnabled", true);
 		}
 
 		// Unrest: what a village holds against its ruler, restlessness, and uprisings the
@@ -1587,7 +1613,16 @@ namespace RuinarchDebug
 			float uprisingAt = PlusBridge.Config("unrestUprising") is int uu ? uu : 72;
 			Guard("hurt the ruler", () => { ruler.AdjustHP(-(ruler.currentHP - Math.Max(1, ruler.maxHP / 5)), ELEMENTAL_TYPE.Normal); return ruler; });
 			PlusBridge.SetUnrest(village, uprisingAt);
-			yield return WaitGameHours(2f, () => PlusBridge.HasUprising(village));
+			// Up to a night: asleep, nobody rises until morning.
+			yield return WaitGameHours(12f, () =>
+			{
+				PlusBridge.SetUnrest(village, Math.Max(PlusBridge.UnrestPoints(village), uprisingAt));
+				if (!ruler.isDead && ruler.currentHP > Math.Max(1, ruler.maxHP / 5))
+				{
+					ruler.AdjustHP(-(ruler.currentHP - Math.Max(1, ruler.maxHP / 5)), ELEMENTAL_TYPE.Normal);
+				}
+				return PlusBridge.HasUprising(village);
+			});
 			bool rose = PlusBridge.HasUprising(village);
 			int fighting = 0;
 			yield return WaitGameHours(14f, () =>
@@ -1605,7 +1640,11 @@ namespace RuinarchDebug
 				$"ruler {ruler.name} -> {newRuler?.name ?? "none"}; ruler unconscious={ruler.traitContainer.HasTrait("Unconscious")} uprising={PlusBridge.HasUprising(village)}"));
 			// The game puts a faction leader back in charge of their home village: it must stick.
 			yield return WaitGameHours(6f, () => village.ruler != newRuler);
-			Check("the new ruler keeps the rule", () => (newRuler != null && village.ruler == newRuler, $"ruler now {village.ruler?.name ?? "none"} (was {newRuler?.name})"));
+			if (newRuler == null || newRuler == ruler)
+			{
+				Skip("the new ruler keeps the rule", $"no new ruler (still {ruler.name})");
+			}
+			else Check("the new ruler keeps the rule", () => (village.ruler == newRuler, $"ruler now {village.ruler?.name ?? "none"} (was {newRuler.name})"));
 
 			// 4. An uprising the ruler puts down: one hurt challenger against a loyal village.
 			if (newRuler == null || newRuler.isDead || newRuler != village.ruler)
@@ -1636,11 +1675,16 @@ namespace RuinarchDebug
 					PlusBridge.SetUnrest(village, uprisingAt);
 					// Only villagers in the village rise: keep the challenger there until it starts.
 					LocationGridTile square = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
-					yield return WaitGameHours(2f, () =>
+					yield return WaitGameHours(12f, () =>
 					{
 						if (!rebel.isDead && rebel.gridTileLocation != null && !rebel.gridTileLocation.IsPartOfSettlement(village))
 						{
 							CharacterManager.Instance.Teleport(rebel, square);
+						}
+						PlusBridge.SetUnrest(village, Math.Max(PlusBridge.UnrestPoints(village), uprisingAt));
+						if (!rebel.isDead && rebel.currentHP > Math.Max(1, rebel.maxHP / 5))
+						{
+							rebel.AdjustHP(-(rebel.currentHP - Math.Max(1, rebel.maxHP / 5)), ELEMENTAL_TYPE.Normal);
 						}
 						return PlusBridge.HasUprising(village);
 					});
@@ -1751,6 +1795,7 @@ namespace RuinarchDebug
 				s.CreateMarker();
 				s.InitialCharacterPlacement(wild);
 				s.marker.UpdatePosition();
+				Watched.Add(s);
 				return s;
 			});
 			int sent = pig == null ? -1 : PlusBridge.SendHunters(village);
@@ -1809,8 +1854,13 @@ namespace RuinarchDebug
 				PlusBridge.Learn(from.owner, portal);
 			}
 			Log($"trade test: {Describe(from)} -> {Describe(to)}");
-			Character trader = PlusBridge.SendTrader(from, to, 40);
-			Check("a village with food to spare sends a trader", () => (trader != null, trader == null ? "nobody went" : $"{trader.name} ({trader.characterClass.className})"));
+			// Up to half a day: at night the village's people are asleep and nobody sets out.
+			Character trader = null;
+			yield return WaitGameHours(12f, () => (trader = PlusBridge.SendTrader(from, to, 40)) != null);
+			Check("a village with food to spare sends a trader", () => (trader != null, trader == null
+				? "nobody went: " + string.Join(", ", from.residents.Where(c => c != null && !c.isDead && c.isNormalCharacter).Select(c =>
+					$"{c.name}[ruler={c == from.ruler} leader={c.isFactionLeader} move={c.limiterComponent.canMove} perform={c.limiterComponent.canPerform} party={c.partyComponent.hasParty} starving={c.needsComponent.isStarving} haul={c.jobQueue.HasJob(JOB_TYPE.HAUL)} hunting={PlusBridge.IsHunting(c)} inside={c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(from)}]"))
+				: $"{trader.name} ({trader.characterClass.className})"));
 			if (trader != null)
 			{
 				yield return WaitGameHours(30f, () => ModsLogHas($"brought 40 food to {to.name}") || trader.isDead);
@@ -2397,7 +2447,11 @@ namespace RuinarchDebug
 			Check("a woman and her lover can conceive", () => (PlusBridge.IsPregnant(mother), $"{mother.name} and {father.name} of {home.name}"));
 			yield return WaitGameHours(26f, () => !PlusBridge.IsPregnant(mother));
 			Character child = home.residents.FirstOrDefault(c => c != null && PlusBridge.IsChild(c));
-			Check("the child is born in the mother's home", () =>
+			if (child == null && mother.isDead)
+			{
+				Skip("the child is born in the mother's home", $"{mother.name} died while pregnant (see the death lines above)");
+			}
+			else Check("the child is born in the mother's home", () =>
 				(child != null && child.homeSettlement == home && child.homeStructure == house && ModsLogHas($"of {home.name} had a child: {child.name}."),
 				child == null ? $"no child; pregnant={PlusBridge.IsPregnant(mother)} mother dead={mother.isDead}" : $"{child.name} home {child.homeSettlement?.name}/{child.homeStructure?.name} (mother's {house?.name})"));
 			if (child == null)
@@ -2933,6 +2987,7 @@ namespace RuinarchDebug
 			PlusBridge.Forget(faction);
 			Guard("make the faction aware of the player", () => { faction.SetIsAwareOfPlayer(true); return faction; });
 			PlusBridge.Learn(faction, outpost);
+			Log($"  after learning: {string.Join(", ", faction.ownedSettlements.OfType<NPCSettlement>().Select(v => $"{v.name}: " + string.Join(" ", v.residents.Where(r => r != null && !r.isDead).Select(r => $"{r.name}[normal={r.isNormalCharacter} sapient={r.race.IsSapient()} allied={r.isAlliedWithPlayer} faction={r.faction?.name} remembers={PlusBridge.Remembers(r, outpost)}]"))))}");
 
 			// Held inside a building: an aware faction sends a Demon Rescue there, but only to a
 			// building it knows. (Instant: placed on a tile, the rescue asked for, and put back,
@@ -3614,9 +3669,17 @@ namespace RuinarchDebug
 			// formed morning after morning) runs out of test time with searches still pending.
 			string starved = !settled() && _partyShortages >= 3
 				? $"no search party could be formed {_partyShortages} times: {village.name}'s residents were busy ({Describe(village)})" : null;
+			// A body found and buried (Mass Grave, cemetery) before anyone missed the victim was
+			// never missing: the record goes quietly, with no "found dead".
+			bool buriedFirst = !ModsLogHas($"{victim.name} of {village.name} has gone missing")
+				&& (victim.grave != null || ModsLogHas($"Mass Grave: {victim.name} laid in the pit"));
 			if (starved != null && PlusBridge.MissingState(victim) != null)
 			{
 				Skip("a resident killed out of sight is found dead", starved);
+			}
+			else if (buriedFirst)
+			{
+				Skip("a resident killed out of sight is found dead", $"{victim.name}'s body was found and buried before anyone missed them");
 			}
 			else Check("a resident killed out of sight is found dead", () =>
 			{

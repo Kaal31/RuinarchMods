@@ -291,11 +291,10 @@ namespace RuinarchPlus.Phase3
 		}
 
 		/// <summary>Every resident of <paramref name="village"/> remembers the news. Returns what
-		/// the village did not know before.</summary>
+		/// the village did not know before and knows now (nothing if no resident can hold it).</summary>
 		private static List<LocationStructure> TellVillage(NPCSettlement village, IEnumerable<LocationStructure> news)
 		{
 			HashSet<LocationStructure> known = VillageKnowledge(village);
-			List<LocationStructure> told = news.Where(s => Standing(s) && !known.Contains(s)).Distinct().ToList();
 			foreach (Character r in village.residents.ToList())
 			{
 				if (!CanRemember(r) || r.isAlliedWithPlayer)
@@ -314,7 +313,8 @@ namespace RuinarchPlus.Phase3
 					}
 				}
 			}
-			return told;
+			HashSet<LocationStructure> now = VillageKnowledge(village);
+			return news.Where(s => !known.Contains(s) && now.Contains(s)).Distinct().ToList();
 		}
 
 		/// <summary>Every village of <paramref name="faction"/> learns the structure (test harness,
