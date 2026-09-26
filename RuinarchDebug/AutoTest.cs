@@ -84,6 +84,14 @@ namespace RuinarchDebug
 		{
 			if (_only.Count == 0 || _only.Contains(suite))
 			{
+				// The player's demons roam the player settlement's areas and fight whoever they
+				// see there: a test building left standing near a village costs villagers.
+				PlayerSettlement ps = PlayerManager.Instance?.player?.playerSettlement;
+				if (ps != null)
+				{
+					Log($"  before {suite}: player buildings [{string.Join(", ", ps.allStructures.Select(s => $"{s.structureType}{(s.hasBeenDestroyed ? " (destroyed)" : "")} at {s.GetCenterTile()?.localPlace}"))}]"
+						+ $"; areas [{string.Join(", ", ps.areas.Select(a => a.gridTileComponent.centerGridTile?.localPlace.ToString()))}]");
+				}
 				return true;
 			}
 			Log($"(suite {suite} not selected)");
@@ -3045,8 +3053,9 @@ namespace RuinarchDebug
 			{
 				Skip("a party that knows nothing still standing goes home instead of attacking the Portal", partyState + " (not working on site)");
 			}
-			// Done with the counterattack: call it off now.
+			// Done with the counterattack: call it off now, and take the outpost down.
 			CallOffCounterattacks(faction);
+			Guard("remove the outpost", () => RemoveTestBuilding(outpost));
 
 			// Seeing is not knowing: a villager of the (aware) faction who sees the portal carries
 			// the news; their faction learns it only when they get home alive.
@@ -3189,7 +3198,7 @@ namespace RuinarchDebug
 			}
 			if (kennel != null)
 			{
-				Guard("destroy the Kennel", () => { kennel.AdjustHP(-kennel.currentHP); return kennel; });
+				Guard("destroy the Kennel", () => RemoveTestBuilding(kennel));
 			}
 
 			SnatchObjectUIController snatch = UIManager.Instance?.snatchObjectUIController;
@@ -3263,7 +3272,7 @@ namespace RuinarchDebug
 				CallOffCounterattacks(faction);
 				PlusBridge.Forget(faction);
 				Guard("restore the faction's awareness", () => { faction.SetIsAwareOfPlayer(wasAware); return faction; });
-				Guard("destroy the building next door", () => { nextDoor.AdjustHP(-nextDoor.currentHP); return nextDoor; });
+				Guard("destroy the building next door", () => RemoveTestBuilding(nextDoor));
 			}
 
 			// Gossip between two friendly factions.
@@ -3744,6 +3753,25 @@ namespace RuinarchDebug
 			return null;
 		}
 
+		// Destroys a building a test placed and takes out of the player settlement every area
+		// no standing player building is on. Seen in runs: a destroyed building's area stayed
+		// in the player settlement, and the player's demons patrol every area of it: they
+		// crossed the map to it, killing villagers on the way. (A building already destroyed,
+		// say by a counterattack, no longer lists its tiles: hence every empty area.)
+		private static LocationStructure RemoveTestBuilding(LocationStructure building)
+		{
+			if (!building.hasBeenDestroyed)
+			{
+				building.AdjustHP(-building.currentHP);
+			}
+			PlayerSettlement ps = PlayerManager.Instance.player.playerSettlement;
+			foreach (Area area in ps.areas.Where(a => !ps.allStructures.Any(s => !s.hasBeenDestroyed && s.HasTileOnArea(a))).ToList())
+			{
+				ps.RemoveAreaFromSettlement(area);
+			}
+			return building;
+		}
+
 		private static bool HasRoomFor(NPCSettlement village, STRUCTURE_TYPE type)
 		{
 			if (village.owner == null)
@@ -3777,9 +3805,12 @@ namespace RuinarchDebug
 		// idle party (no quest) are free to join. Null (logged) if fewer than `min` are free.
 		private Party FormPartyFor(PartyQuest quest, NPCSettlement village, int min, int max)
 		{
+			// Free and at home: a test's own captive or wanderer (restrained, far away; canMove
+			// stays true while restrained) would take the quest and never get anywhere.
 			List<Character> members = village.residents.Where(r => r != null && !r.isDead && r.marker != null
 				&& (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive)
-				&& r != village.ruler && r.limiterComponent.canMove && !PlusBridge.IsChild(r)).Take(max).ToList();
+				&& r != village.ruler && r.limiterComponent.canMove && !PlusBridge.IsChild(r)
+				&& !r.traitContainer.HasTrait("Restrained") && r.gridTileLocation != null && r.gridTileLocation.IsPartOfSettlement(village)).Take(max).ToList();
 			if (members.Count < min)
 			{
 				Log($"  only {members.Count} free resident(s) for a party; {quest.partyQuestType} needs {min}");
@@ -3860,12 +3891,21 @@ namespace RuinarchDebug
 
 		// Every villager death of the run by cause and killer, logged at the end: when the world
 		// empties the test villages, this says what did it (the game's own dangers, or a mod).
+		// Each death is also logged as it happens; one with no killer and no interrupt names
+		// the method that called Death, since "normal" alone says nothing.
 		private static readonly Dictionary<string, int> Deaths = new Dictionary<string, int>();
 
 		[HarmonyPatch(typeof(Character), nameof(Character.Death))]
 		internal static class DeathTally
 		{
-			private static void Prefix(Character __instance, out bool __state) => __state = __instance.isDead;
+			// The killer's combat reason is read before the death ends the fight.
+			private static string _reason;
+
+			private static void Prefix(Character __instance, Character responsibleCharacter, out bool __state)
+			{
+				__state = __instance.isDead;
+				_reason = responsibleCharacter?.combatComponent.GetCombatData(__instance)?.reasonForCombat ?? "none";
+			}
 
 			private static void Postfix(Character __instance, bool __state, string cause, Character responsibleCharacter, Interrupts.Interrupt interrupt)
 			{
@@ -3877,6 +3917,50 @@ namespace RuinarchDebug
 				string key = cause + by + (interrupt != null ? $" ({interrupt.name})" : "") + (__instance.traitContainer.HasTrait("Plagued") ? " [plagued]" : "");
 				Deaths.TryGetValue(key, out int n);
 				Deaths[key] = n + 1;
+				string killer = responsibleCharacter == null ? "" : $" by {responsibleCharacter.name} ({responsibleCharacter.race}/{responsibleCharacter.characterClass.className}, {responsibleCharacter.faction?.name ?? "no faction"}"
+					+ $", reason {_reason}, quest {responsibleCharacter.partyComponent.currentParty?.currentQuest?.GetType().Name ?? "none"}"
+					+ $", from {responsibleCharacter.gridTileLocation?.localPlace}, portal {PlayerManager.Instance.player.playerSettlement.GetFirstStructureOfType(STRUCTURE_TYPE.THE_PORTAL)?.GetCenterTile()?.localPlace})";
+				string caller = "";
+				if (responsibleCharacter == null && interrupt == null)
+				{
+					caller = " via " + CallerChain();
+				}
+				_running.Log($"  death: {__instance.name} of {__instance.homeSettlement?.name ?? "no home"} ({__instance.faction?.name ?? "no faction"}) at {__instance.gridTileLocation?.localPlace} in {__instance.currentSettlement?.name ?? __instance.currentStructure?.name ?? "the wild"}: {key}{killer}{caller}");
+			}
+		}
+
+		// The three game methods nearest the caller (Harmony's patched copies and the harness
+		// itself left out).
+		private static string CallerChain() => string.Join(" < ", new System.Diagnostics.StackTrace(2).GetFrames()
+			.Select(f => f.GetMethod()).Where(m => m != null && m.Name != "Death" && !m.Name.Contains("::") && !m.Name.Contains("_Patch") && !(m.DeclaringType?.Namespace ?? "").StartsWith("RuinarchDebug"))
+			.Take(3).Select(m => $"{m.DeclaringType?.Name}.{m.Name}"));
+
+		// Creatures a test put in the world: their death (Summon.Death does not go through
+		// Character.Death) and the removal of their marker are logged with who did it.
+		private static readonly HashSet<Character> Watched = new HashSet<Character>();
+
+		[HarmonyPatch(typeof(Summon), nameof(Summon.Death))]
+		internal static class WatchedDeath
+		{
+			private static void Postfix(Summon __instance, string cause, Character responsibleCharacter)
+			{
+				if (_running != null && Watched.Contains(__instance))
+				{
+					_running.Log($"  watched {__instance.name} died ({cause}) at {__instance.gridTileLocation?.localPlace}"
+						+ (responsibleCharacter != null ? $" by {responsibleCharacter.name} ({responsibleCharacter.characterClass.className}, {responsibleCharacter.faction?.name ?? "no faction"}) job {responsibleCharacter.currentJob?.jobType}" : " via " + CallerChain()));
+				}
+			}
+		}
+
+		[HarmonyPatch(typeof(Character), nameof(Character.DestroyMarker))]
+		internal static class WatchedMarker
+		{
+			private static void Prefix(Character __instance)
+			{
+				if (_running != null && Watched.Contains(__instance) && __instance.hasMarker)
+				{
+					_running.Log($"  watched {__instance.name} (dead={__instance.isDead}) loses its marker at {__instance.gridTileLocation?.localPlace} via {CallerChain()}");
+				}
 			}
 		}
 
