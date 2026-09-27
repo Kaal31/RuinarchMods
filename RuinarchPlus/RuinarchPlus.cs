@@ -32,6 +32,7 @@ namespace RuinarchPlus
 			Phase5.Famine.Register();
 			Phase5.Unrest.Register();
 			Phase4.LifeCycle.Register();
+			Phase4.Records.Register();
 			Phase3.MissingPersons.Register();
 
 			var patched = Harmony.GetAllPatchedMethods()

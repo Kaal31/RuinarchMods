@@ -438,6 +438,24 @@ knowledge).
    remember, and after a while the faction loses where you are. Needs births, aging, illness
    and death (items 2 and 3) first, so it follows them.
 
+   **Implemented, not yet verified in game: records** (`Phase4/Records.cs`,
+   `Phase4/Library.cs`, config `recordsEnabled`, `readChance` 25, `libraryVisitChance` 10,
+   `libraryBooks` 4; spec `docs/specs/2026-09-27-records-library-design.md`). A record is the
+   game's own `BOOK` object: one per dwelling, written by any resident standing at home who
+   remembers a building (`Knowledge.NewsOf`, not what they still carry), and a Library's
+   Books. A Town or City (and a capital) queues a **Library** (a ModContent village building
+   borrowing the Workshop prefab, the only one every culture has: the Magic Academy's are
+   elven or corrupted only) through `ModBuildings`, like the Town Hall; the mod puts
+   `libraryBooks` Books in it. Hourly, inside the knowledge tick after
+   `Knowledge.HourlyCheck`: residents at home or in their Library write and read
+   (`Knowledge.Read`, `readChance` % per entry they do not remember); free-time visits to the
+   Library through a `BehaviourComponent.RunBehaviour` prefix (`VISIT_STRUCTURE` go-to job,
+   one roll per villager per hour, never under curfew). Records never count by themselves.
+   A Book no longer in its holder drops its entries; a Library losing its last Book, or
+   destroyed, is announced. Saved in `ModData/ruinarch.plus.records.json`
+   (`kind|holderId|bookIds|structureIds`). The panel's faction line adds "(written in 3
+   homes and the Library of Andorlad)".
+
 *Dependency:* population + food + war together drive Phase 5 settlement growth.
 
 ---

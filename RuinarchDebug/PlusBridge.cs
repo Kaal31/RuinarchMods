@@ -319,6 +319,35 @@ namespace RuinarchDebug
 			KnowledgeType?.GetMethod("Forget", Any)?.Invoke(null, new object[] { faction });
 		}
 
+		// ---- records (Phase 4) ----
+		private static Type RecordsType => Plus?.GetType("RuinarchPlus.Phase4.Records");
+
+		internal static bool RecordsAvailable => RecordsType != null;
+
+		/// <summary>The buildings the record in a dwelling or Library names; null if it keeps none.</summary>
+		internal static HashSet<LocationStructure> RecordOf(LocationStructure holder) =>
+			RecordsType?.GetMethod("RecordOf", Any)?.Invoke(null, new object[] { holder }) as HashSet<LocationStructure>;
+
+		internal static List<TileObject> BooksOf(LocationStructure holder) =>
+			RecordsType?.GetMethod("BooksOf", Any)?.Invoke(null, new object[] { holder }) as List<TileObject> ?? new List<TileObject>();
+
+		internal static LocationStructure LibraryFor(BaseSettlement settlement) =>
+			Plus?.GetType("Inner_Maps.Location_Structures.Library")?.GetMethod("FindFor", Any)?.Invoke(null, new object[] { settlement }) as LocationStructure;
+
+		internal static LocationStructure InstantBuildLibrary(NPCSettlement settlement) =>
+			RecordsType?.GetMethod("InstantBuildLibrary", Any)?.Invoke(null, new object[] { settlement }) as LocationStructure;
+
+		/// <summary><paramref name="c"/> remembers the structure as if read at home (not carried).</summary>
+		internal static void RememberAtHome(Character c, LocationStructure structure) =>
+			KnowledgeType?.GetMethod("Read", Any)?.Invoke(null, new object[] { c, structure });
+
+		internal static void ForgetRecords(Faction faction) =>
+			RecordsType?.GetMethod("Forget", Any)?.Invoke(null, new object[] { faction });
+
+		/// <summary><paramref name="c"/> writes what they remember into the record in <paramref name="holder"/> now.</summary>
+		internal static bool WriteRecord(Character c, LocationStructure holder) =>
+			RecordsType?.GetMethod("Write", Any)?.Invoke(null, new object[] { c, holder }) is bool b && b;
+
 		private static Type MissingType => Plus?.GetType("RuinarchPlus.Phase3.MissingPersons");
 
 		/// <summary>Tell Ruinarch+ that one of their people saw <paramref name="c"/> at <paramref name="at"/>.</summary>

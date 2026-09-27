@@ -1,6 +1,6 @@
 # Records: home Books and the Library (Ruinarch+, Phase 4)
 
-Status: design approved in chat (2026-09-27), awaiting spec review.
+Status: approved (2026-09-27). Plan: `docs/plans/2026-09-27-records-library.md`.
 
 ## Goal
 
@@ -31,7 +31,10 @@ knowledge when a villager reads it.
   (`CharacterClassBehaviour.cs:22,50`, `PlaceBlueprint.cs:19`). No library exists.
 - Structure prefabs are looked up per faction type, falling back to `FACTION_TYPE.None`
   (`StructureData.GetStructurePrefabs`, `StructureData.cs:57-75`); a missing choice throws.
-  Whether non-elven factions can place the Magic Academy prefab is asset data, not code.
+  The game data (`sharedassets0.assets`) has Workshop prefabs for every culture (`Wood
+  Workshop 1`, `Stone Workshop 1`, `Nature Workshop`, `Divine Workshop`, `Corrupted
+  Workshop 1/2`) but Magic Academy prefabs only for elves and the corrupted set (`Magic
+  Academy 1/2`, `Corrupted Wood/Stone Magic Academy 1`).
 - A free-time trip to a building uses
   `jobComponent.CreateGoToJob(JOB_TYPE.VISIT_STRUCTURE, tile, out job)`
   (`SocializingBehaviour.cs:78`).
@@ -63,17 +66,18 @@ of player buildings it names:
   standing at home has something to write. It serves the household: the dwelling's
   residents.
 - **Library.** A new village building, id `ruinarch.plus.library`, name "Library", added
-  through `ModBuildings`. It borrows the Magic Academy prefab if the prefab probe (below)
-  shows every major village faction can place it, else the Workshop prefab. It holds
-  `libraryBooks` Books; the mod places the missing ones on free tiles inside when it is
-  built or loaded. The Library's record is one set shared by its Books: it stands while at
-  least one of its Books stands.
+  through `ModBuildings`, borrowing the **Workshop** prefab (the only candidate every culture
+  can place). When it is first seen built, the mod places `libraryBooks` Books on free tiles
+  inside. The Library's record is one set shared by its Books: it stands while at least one
+  of its Books stands.
 
 Entries leave a record when:
 
 - the Book is destroyed (burned, broken, or removed with its building): a home Book's
   entries go with it; the Library's record goes when its last Book goes or the Library is
-  destroyed;
+  destroyed. Burned Books are not replaced by themselves: the next villager who writes into
+  a home or a Library with no Book left places one new Book, holding only what that
+  villager remembers. A record is rewritten only from living memory.
 - the building an entry names is destroyed (the `Standing` rule of `Knowledge`).
 
 **Building a Library.** Hourly, a village whose tier is Town or City, with no Library
@@ -100,11 +104,19 @@ player):
 and `Hear`: the reader is in their own village, so they remember the building without
 carrying it, and the village knows it at once.
 
-**Visits.** A prefix on `BehaviourComponent.RunBehaviour` (the curfew's hook, same
-conditions: `Free_Time`, no queued job): a villager whose village's Library names something
-they do not remember has a `libraryVisitChance` % per hour of walking there with
-`CreateGoToJob(JOB_TYPE.VISIT_STRUCTURE, <free tile inside the Library>)`. No visits under
-curfew (`Curfew.IsUnderCurfew`); the curfew's own prefix runs first.
+**Visits.** A prefix on `BehaviourComponent.RunBehaviour` (the curfew's hook, which the
+game calls every tick while a villager is idle; `Character.StartTickGoapPlanGeneration`):
+in `Free_Time`, a villager whose village's Library names something they do not remember
+rolls `libraryVisitChance` % once per game hour and on success walks there with
+`CreateGoToJob(JOB_TYPE.VISIT_STRUCTURE, <free tile inside the Library>)`. Anyone the
+curfew binds (`Curfew.Binds`) does not visit, so the order of the two prefixes does not
+matter.
+
+**Order.** The records check runs inside the knowledge hourly postfix, right after
+`Knowledge.HourlyCheck`, so a witness back home has told the village before anyone writes.
+`Knowledge.TellVillage` already makes every resident remember what anyone standing at home
+remembers; reading is what restores knowledge when nobody who remembers is left (children,
+newcomers, a village whose rememberers died or forgot).
 
 **Dementia.** A forgetful elder who forgets a building (`Knowledge.ForgetOne`) can read it
 back from a record. Records slow forgetting; once every record naming it is gone,
@@ -112,13 +124,13 @@ forgetting sticks.
 
 **Event log.**
 - "Casey read of your Portal in Andorlad's Library." / "Casey read of your Portal at
-  home.": when a villager learns a building by reading (at most once per villager per
-  building per day).
+  home.": when a villager learns a building by reading (event log only).
 - "A household in Andorlad started keeping a record of your buildings.": the first entry
   in a new home Book.
-- "Andorlad's Library has burned; its records of your Portal and Corrupt Kennel are lost."
-  (or "was destroyed"): the Library's record lost. Home Books lost with their houses are
-  not announced.
+- "Andorlad's Library was destroyed; its records of your Portal and Corrupt Kennel are
+  lost." / "Andorlad's Library has lost its last Book; its records of ... are lost.": the
+  Library's record lost (a notification). Home Books lost with their houses are not
+  announced.
 
 ## What the player sees
 
@@ -152,10 +164,7 @@ a type the game does not know, the same as the Town Hall and Mass Grave today.
 
 ## Order of work
 
-1. **Prefab probe (in game, waits for approval):** a RuinarchDebug probe logs, for every
-   major village faction type, whether `GetStructurePrefabs` returns Magic Academy and
-   Workshop choices, their footprints, and whether the Magic Academy prefab comes with
-   `BOOK` objects. Decides the borrowed prefab.
+1. Knowledge entry point (`Knowledge.Read`, predicates made internal).
 2. Records, reading, writing, save (`Phase4/Records.cs`, `Knowledge.Read`).
 3. Library building, Book placement, visits.
 4. Panel line, config, README, design doc.
@@ -163,16 +172,24 @@ a type the game does not know, the same as the Town Hall and Mass Grave today.
 
 ## Testing (`RecordsSuite` in `RuinarchDebug/AutoTest.cs`)
 
-1. A villager at home who remembers a building writes it into a new home Book.
-2. A member of that household who does not remember it reads it within a day.
-3. Burning the home Book removes its record; nobody learns from it afterwards.
-4. A Town builds a Library (instant-build fallback when no builder or no room, as the
-   Town Hall test does).
-5. A villager writes in the Library; another villager of the village learns it after a
-   free-time visit.
-6. A destroyed Library is announced and its record is gone.
-7. Records survive a save and load (`ReplayLoad`).
-8. A forgetful elder who forgot a building reads it back from a record.
+The faction is never made aware of the player (no counterattacks), and forgets everything
+taught at the end (`Knowledge.Forget`, `Records.Forget`). A villager's neighbours are told
+whatever anyone standing at home remembers, so a reading check first leaves exactly one
+record and nobody who remembers.
+
+1. A villager at home who remembers a building writes it into a new home Book (and the
+   event log says the household started one); the panel's faction line says where records
+   are kept.
+2. With nobody left who remembers (dead, moved away, or forgotten like a forgetful elder), a
+   member of the household reads it back from the Book.
+3. A Book destroyed while nobody remembers takes its record with it; nobody learns from it.
+4. A Town or City queues a Library blueprint (skipped with no room for a Workshop-sized
+   building).
+5. A Library (built at once; villagers take days) holds Books.
+6. A villager writes in the Library; with only the Library's record left and nobody who
+   remembers, a villager goes there and reads it within a day.
+7. Records survive a save and load (`SaveAndRead`, `ReplayLoad`).
+8. A destroyed Library is announced and its record is gone.
 
 ## Out of scope
 

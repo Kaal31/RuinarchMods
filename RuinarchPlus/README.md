@@ -55,6 +55,7 @@ migration, growing settlements, famine, hunting and trade). These change the gam
 | **Villagers are born, grow up, grow old and die** | A year is 16 in-game days. Everyone has an age, shown under their name ("Farmer, age 3", "Child, age 0", "elder") and in an Age row on the Info tab of every character's panel ("Unknown" for those without one); villagers already there when a game starts are adults, some of them elders. A woman and her lover of the same race and village may have a child (rarely: about once a year per couple, half as often when food runs short, never in famine); she is expecting for a season (4 days) and the child is born in their home. Children are drawn smaller, don't work, don't fight and are never picked to rule. Humans come of age at 1 and Elves at 3, then take up a trade the game picks for them. Elders die of old age: Humans around 6 (5 to 7), Elves around 18. |
 | **Creatures grow old too** | Wild and tamed creatures (animals and living monsters, not undead, demons, golems or your minions) have an age in the same years and die of old age: rabbits, rats and chickens after about 2 years, wolves, boars, pigs, sheep, scorpions and spiders 4, bears, trolls, orcs, goblins and kobolds 6, centaurs, harpies, tritons and mothmen 8, wyverns, wurms and unicorns 12, dragons 40. The young are drawn smaller for the first quarter of their life; the Age row shows "0, young" or "5, elder". Those the world began with have random ages; the ones the game spawns or hatches later are born then. The game already replaces game animals, den beasts and egg layers; the kinds it never replaces (trolls, orcs, goblins, kobolds, centaurs, mothmen, wurms, unicorns, scorpions) have young of their own, about once a year, while their group is smaller than it was. Old age and births go to the event log only. |
 | **Memory fades with the people** | What a village knows of you lives in its people, and dies with them. One elder in three grows forgetful ("elder, forgetful" in their panel) and forgets one of your buildings every 3 days. Children and newcomers are not told old news, so once everyone in a village who remembers a building is dead or has forgotten it, the village no longer knows it ("Nobody in Mysa remembers your Portal any more." in the event log), unless someone who remembers comes by and tells it again. Outlive the witnesses and your buildings are forgotten. Needs `knowledgeEnabled`. |
+| **Books and Libraries** | Villages keep records of you. A villager at home writes every building of yours they remember into their household's Book (a household that starts one says so in the event log), and once a village is a Town or City its villagers build a **Library** (it looks like a Workshop) holding four Books, where anyone of the village writes and reads. A villager beside a record who does not remember one of its buildings reads it and remembers it again ("Casey read of your Portal in Andorlad's Library."); in their free time, villagers go to the Library to read what they have forgotten. Records only matter through a reader: a village whose witnesses are all dead or forgetful learns you again from its books. Books are ordinary objects: burn or break them and their records are gone, and a destroyed Library is announced. A record is only ever rewritten from living memory, so burn the books and outlive the people who remember. "Who Knows of You" says where each faction keeps records ("(written in 3 homes and the Library of Andorlad)"). Needs `knowledgeEnabled`; Libraries need `settlementTiersEnabled`. |
 
 ## Phase 5: Settlements & Economy (in progress)
 
@@ -89,6 +90,7 @@ your `Mods/RuinarchPlus/` folder:
     "lifeCycleEnabled": true,
     "lifeDaysPerYear": 16,
     "creatureLifeEnabled": true,
+    "recordsEnabled": true,
     "settlementTiersEnabled": true,
     "townPopulation": 20,
     "cityPopulation": 40,
@@ -127,6 +129,10 @@ your `Mods/RuinarchPlus/` folder:
 | `dementiaChance` | `33` | Percent of villagers who grow forgetful when they become elders. `0` turns dementia off. |
 | `dementiaForgetDays` | `3` | A forgetful elder forgets one of your buildings every this many days. |
 | `creatureLifeEnabled` | `true` | Creatures age, die of old age and (kinds the game never replaces) have young. Needs `lifeCycleEnabled`. |
+| `recordsEnabled` | `true` | Households write what they remember of your buildings into Books, and Towns and Cities build a Library; villagers read records back into memory. Needs `knowledgeEnabled`. |
+| `readChance` | `25` | Percent per hour that a villager beside a record learns each of its buildings they do not remember. |
+| `libraryVisitChance` | `10` | Percent per free-time hour that a villager goes to read in the Library when it holds something they do not remember. |
+| `libraryBooks` | `4` | Books in a new Library. |
 | `settlementTiersEnabled` | `true` | Villages that grow build a Town Hall and become Towns and Cities, with room for more buildings. Set `false` for vanilla. |
 | `townPopulation` | `20` | Living villagers a village needs to build a Town Hall and become a Town. |
 | `cityPopulation` | `40` | Living villagers a Town needs to become a City. |

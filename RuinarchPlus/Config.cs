@@ -131,6 +131,17 @@ namespace RuinarchPlus
 		// never replaces (trolls, orcs, goblins, kobolds, centaurs, mothmen, wurms, unicorns,
 		// scorpions) have young now and then, up to the size their group had.
 		public bool creatureLifeEnabled = true;
+		// Records (with knowledgeEnabled): households write what they remember of the player's
+		// buildings into a Book at home; a Town or City builds a Library (with
+		// settlementTiersEnabled) holding libraryBooks Books, where any villager writes and
+		// reads. Beside a record, a villager who does not remember one of its buildings reads
+		// it, readChance percent per hour; in free time a villager who does not remember
+		// something the Library holds goes to read, libraryVisitChance percent per hour.
+		// Burning the Books loses the records.
+		public bool recordsEnabled = true;
+		public int readChance = 25;
+		public int libraryVisitChance = 10;
+		public int libraryBooks = 4;
 
 		// Corpse-borne disease. Rotting unburied corpses in a settlement sicken the living
 		// present, scaled by corpse count. Requires corpseDecayEnabled (it reads the decay stage).

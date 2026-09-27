@@ -72,15 +72,15 @@ namespace RuinarchPlus.Phase3
 
 		internal static bool Enabled => RuinarchPlusConfig.Current.knowledgeEnabled;
 
-		private static bool Standing(LocationStructure s) => s is DemonicStructure && !s.hasBeenDestroyed;
+		internal static bool Standing(LocationStructure s) => s is DemonicStructure && !s.hasBeenDestroyed;
 
-		private static bool CanRemember(Character c) => c != null && !c.isDead && c.isNormalCharacter && c.race.IsSapient();
+		internal static bool CanRemember(Character c) => c != null && !c.isDead && c.isNormalCharacter && c.race.IsSapient();
 
 		// Someone on the player's side (a Demon Worship cultist, as the game counts it) keeps what
 		// they remember but does not give the demons away: their village and party do not know
 		// it through them, they tell nobody, and they learn nothing new. Should they turn from
 		// the cult, what they remember counts again.
-		private static bool Counts(Character c) => c != null && !c.isDead && !c.isAlliedWithPlayer;
+		internal static bool Counts(Character c) => c != null && !c.isDead && !c.isAlliedWithPlayer;
 
 		// ---- people ------------------------------------------------------------------------
 
@@ -162,6 +162,14 @@ namespace RuinarchPlus.Phase3
 			{
 				RuinarchPlus.Log?.Info($"{teller.name} of {teller.faction?.name} told {listener.name} of {listener.faction.name} about {structure.name}.");
 			}
+		}
+
+		/// <summary><paramref name="reader"/> read of the structure in a record at home or in their
+		/// village's Library (Phase4/Records.cs): they remember it, and being at home it is not
+		/// news they carry. True if they did not remember it before.</summary>
+		internal static bool Read(Character reader, LocationStructure structure)
+		{
+			return CanRemember(reader) && !reader.isAlliedWithPlayer && Standing(structure) && Remember(reader, structure);
 		}
 
 		/// <summary>Dementia (Phase4/LifeCycle.cs): <paramref name="c"/> forgets one building they
@@ -696,6 +704,16 @@ namespace RuinarchPlus.Phase3
 			catch (Exception e)
 			{
 				RuinarchPlus.Log?.Warning("Knowledge hourly failed: " + e.Message);
+			}
+			// Records after knowledge: a witness back home has told the village before anyone
+			// writes (Phase4/Records.cs).
+			try
+			{
+				Phase4.Records.HourlyCheck();
+			}
+			catch (Exception e)
+			{
+				RuinarchPlus.Log?.Warning("Records hourly failed: " + e.Message);
 			}
 		}
 	}

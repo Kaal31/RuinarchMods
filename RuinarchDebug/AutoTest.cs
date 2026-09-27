@@ -257,6 +257,8 @@ namespace RuinarchDebug
 			// spared).
 			if (Runs("KnowledgeSuite")) { yield return Safe("KnowledgeSuite", KnowledgeSuite()); }
 			if (Runs("FogSuite")) { yield return Safe("FogSuite", FogSuite()); }
+			// Records: home Books and a Library; forgets everything it teaches at the end.
+			if (Runs("RecordsSuite")) { yield return Safe("RecordsSuite", RecordsSuite()); }
 			// Waits ~72 in-game hours, during which villages lose people to the world.
 			if (Runs("DecayTest")) { yield return Safe("DecayTest", DecayTest()); }
 			// Starves one village until famine, then feeds it; some villagers move away.
@@ -3524,6 +3526,222 @@ namespace RuinarchDebug
 			}
 		}
 
+		// Phase 4: records. Households write what they remember of the player's buildings into
+		// a Book at home, a Town or City builds a Library, and villagers read the records back
+		// into memory once nobody who remembers is around. The faction is never made aware of
+		// the player (no counterattacks), and it forgets everything taught here at the end.
+		private IEnumerator RecordsSuite()
+		{
+			if (!PlusBridge.RecordsAvailable || !(PlusBridge.Config("recordsEnabled") is bool on) || !on)
+			{
+				Skip("records", "RuinarchPlus (with records) not loaded");
+				yield break;
+			}
+			LocationStructure portal = PlayerManager.Instance.player.playerSettlement.GetFirstStructureOfType(STRUCTURE_TYPE.THE_PORTAL);
+			Func<Character, bool> able = r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && !r.isAlliedWithPlayer
+				&& r.marker != null && r.carryComponent.isBeingCarriedBy == null && r.limiterComponent.canMove
+				&& (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive);
+			// A household of two who can be sent home, in a village of a major faction; Towns and
+			// Cities first, since they build Libraries.
+			LocationStructure house = null;
+			NPCSettlement village = null;
+			Character writer = null, reader = null;
+			foreach (NPCSettlement v in Villages().Where(v => v.owner != null && v.owner.isMajorNonPlayer).OrderByDescending(v => PlusBridge.Tier(v) != "Village"))
+			{
+				List<LocationStructure> dwellings = v.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>();
+				foreach (LocationStructure d in dwellings.Where(d => !d.hasBeenDestroyed && d.passableTiles.Any(t => t.structure == d && !t.isOccupied)))
+				{
+					List<Character> household = d.residents.Where(able).ToList();
+					if (household.Count >= 2)
+					{
+						house = d;
+						village = v;
+						writer = household[0];
+						reader = household[1];
+						break;
+					}
+				}
+				if (house != null)
+				{
+					break;
+				}
+			}
+			if (portal == null || house == null)
+			{
+				Skip("records", portal == null ? "no portal" : "no household of two free villagers: " + string.Join("; ", Villages().Select(Describe)));
+				yield break;
+			}
+			Faction faction = village.owner;
+			Log($"records test village: {Describe(village)} tier={PlusBridge.Tier(village)}; household {house.name}: writer {writer.name}, reader {reader.name}");
+			object readChance = PlusBridge.Config("readChance");
+			object visitChance = PlusBridge.Config("libraryVisitChance");
+			PlusBridge.SetConfig("readChance", 100);
+			PlusBridge.SetConfig("libraryVisitChance", 100);
+			PlusBridge.Forget(faction);
+			PlusBridge.ForgetRecords(faction);
+			Func<LocationStructure, string> record = h => PlusBridge.RecordOf(h) is HashSet<LocationStructure> set ? "[" + string.Join(", ", set.Select(s => s.name)) + "]" : "none";
+
+			// 1. Someone at home who remembers writes it down; a household without a Book starts one.
+			int mark = ModsLogLength();
+			Guard("teach the writer", () => { PlusBridge.RememberAtHome(writer, portal); return writer; });
+			yield return StandIn(writer, house, 3, () => PlusBridge.RecordOf(house)?.Contains(portal) == true);
+			Check("a villager at home writes what they remember into a new home Book", () =>
+				(PlusBridge.RecordOf(house)?.Contains(portal) == true && PlusBridge.BooksOf(house).Count == 1
+					&& ModsLogHasSince(mark, $"A household in {village.name} started keeping a record"),
+				$"record={record(house)} books={PlusBridge.BooksOf(house).Count} writer in {writer.currentStructure?.name ?? "the wild"}"));
+			yield return WaitGameHours(0.2f, null);
+			List<string> panel = PlusBridge.KnowledgePanelLines() ?? new List<string>();
+			Check("the bookmarks panel says where a faction keeps records", () =>
+				(panel.Any(l => l.Contains(faction.name) && l.Contains("(written in ") && l.Contains("home")), string.Join(" / ", panel)));
+
+			// 2. Nobody who remembers is left (dead, moved, forgotten like a forgetful elder), and
+			// only this household keeps a record: someone at home reads it back.
+			Guard("leave only this household's record, and nobody who remembers", () =>
+			{
+				PlusBridge.ForgetRecords(faction);
+				PlusBridge.RememberAtHome(writer, portal);
+				PlusBridge.WriteRecord(writer, house);
+				PlusBridge.Forget(faction);
+				return house;
+			});
+			mark = ModsLogLength();
+			yield return StandIn(reader, house, 4, () => PlusBridge.Remembers(reader, portal));
+			Check("a household member who does not remember reads it back from the Book", () =>
+				(PlusBridge.Remembers(reader, portal) && ModsLogHasSince(mark, $"read of your {portal.name} at home"),
+				$"remembers={PlusBridge.Remembers(reader, portal)} record={record(house)} reader in {reader.currentStructure?.name ?? "the wild"}"));
+
+			// 3. The Book burns while nobody remembers: its record is gone, nobody learns from it.
+			TileObject book = null;
+			Guard("destroy the Book while nobody remembers", () =>
+			{
+				PlusBridge.ForgetRecords(faction);
+				PlusBridge.RememberAtHome(writer, portal);
+				PlusBridge.WriteRecord(writer, house);
+				PlusBridge.Forget(faction);
+				book = PlusBridge.BooksOf(house).FirstOrDefault();
+				book?.AdjustHP(-book.currentHP, ELEMENTAL_TYPE.Normal);
+				return book;
+			});
+			yield return StandIn(reader, house, 2, () => false);
+			Check("a destroyed Book takes its record with it; nobody reads from it afterwards", () =>
+				(book != null && PlusBridge.RecordOf(house) == null && !PlusBridge.Remembers(reader, portal),
+				$"book on {book?.gridTileLocation?.localPlace.ToString() ?? "nothing"} record={record(house)} reader remembers={PlusBridge.Remembers(reader, portal)}"));
+
+			// 4. A Town or City queues a Library blueprint.
+			string tier = PlusBridge.Tier(village);
+			if (tier == "Village")
+			{
+				Skip("a Town or City queues a Library blueprint", $"{village.name} is a village");
+			}
+			else if (PlusBridge.LibraryFor(village) != null)
+			{
+				Skip("a Town or City queues a Library blueprint", $"{village.name} already has a Library");
+			}
+			else
+			{
+				mark = ModsLogLength();
+				string queued = $"{village.name} is a {tier}: queued a Library blueprint";
+				yield return WaitGameHours(6f, () => ModsLogHasSince(mark, queued));
+				if (!ModsLogHasSince(mark, queued) && !HasRoomFor(village, STRUCTURE_TYPE.WORKSHOP))
+				{
+					Skip("a Town or City queues a Library blueprint", $"{village.name} has no room for a Workshop-sized building");
+				}
+				else
+				{
+					Check("a Town or City queues a Library blueprint", () =>
+						(ModsLogHasSince(mark, queued), $"placeBlueprint job={village.HasJob(JOB_TYPE.PLACE_BLUEPRINT)}"));
+				}
+			}
+
+			// 5. The Library (built at once here: villagers take days) holds Books.
+			LocationStructure library = PlusBridge.LibraryFor(village) ?? Guard("build a Library", () => PlusBridge.InstantBuildLibrary(village));
+			if (library == null)
+			{
+				foreach (string name in new[] { "a Library holds Books", "a villager writes in the Library", "a villager with nothing to remember it by goes to the Library and reads it",
+					"records are stored inside the player's save file", "records come back when the save loads", "a destroyed Library is announced and its records are gone" })
+				{
+					Skip(name, $"{village.name} has no room for a Library");
+				}
+			}
+			else
+			{
+				yield return WaitGameHours(1.05f, () => PlusBridge.BooksOf(library).Count > 0);
+				Check("a Library holds Books", () => (PlusBridge.BooksOf(library).Count > 0, $"books={PlusBridge.BooksOf(library).Count} (libraryBooks={PlusBridge.Config("libraryBooks")})"));
+
+				// 6. Writing there, then a free-time visit by someone who does not remember.
+				Guard("teach the writer", () => { PlusBridge.RememberAtHome(writer, portal); return writer; });
+				yield return StandIn(writer, library, 3, () => PlusBridge.RecordOf(library)?.Contains(portal) == true);
+				Check("a villager writes in the Library", () =>
+					(PlusBridge.RecordOf(library)?.Contains(portal) == true, $"record={record(library)} writer in {writer.currentStructure?.name ?? "the wild"}"));
+				Guard("leave only the Library's record, and nobody who remembers", () =>
+				{
+					PlusBridge.ForgetRecords(faction);
+					PlusBridge.RememberAtHome(writer, portal);
+					PlusBridge.WriteRecord(writer, library);
+					PlusBridge.Forget(faction);
+					return library;
+				});
+				mark = ModsLogLength();
+				string readThere = $"read of your {portal.name} in {village.name}'s Library";
+				yield return WaitGameHours(24f, () => ModsLogHasSince(mark, readThere));
+				Check("a villager with nothing to remember it by goes to the Library and reads it", () =>
+					(ModsLogHasSince(mark, readThere), $"record={record(library)}; villagers remembering={village.residents.Count(r => PlusBridge.Remembers(r, portal))}"));
+
+				// 7. Stored in the save, and back after a load.
+				string json = null;
+				string entries = null;
+				yield return SaveAndRead("ruinarch.plus.records.json", (j, e) => { json = j; entries = e; });
+				Check("records are stored inside the player's save file", () =>
+					(json != null && json.Contains(library.persistentID) && json.Contains(portal.persistentID),
+					json == null ? "entries: " + entries : $"{json.Length} bytes: {json.Substring(0, Math.Min(json.Length, 200))}"));
+				if (json != null)
+				{
+					PlusBridge.ForgetRecords(faction);
+					ReplayLoad("ruinarch.plus.records.json", json);
+					Check("records come back when the save loads", () =>
+						(PlusBridge.RecordOf(library)?.Contains(portal) == true && PlusBridge.BooksOf(library).Count > 0,
+						$"record={record(library)} books={PlusBridge.BooksOf(library).Count}"));
+				}
+				else
+				{
+					Skip("records come back when the save loads", "no records in the save");
+				}
+
+				// 8. The Library destroyed: announced, its record gone.
+				if (PlusBridge.RecordOf(library)?.Contains(portal) != true)
+				{
+					Guard("write the Library's record again", () => { PlusBridge.RememberAtHome(writer, portal); PlusBridge.WriteRecord(writer, library); return library; });
+				}
+				mark = ModsLogLength();
+				Guard("destroy the Library", () => { library.AdjustHP(-library.currentHP); return library; });
+				yield return WaitGameHours(0.2f, null);
+				Check("a destroyed Library is announced and its records are gone", () =>
+					(PlusBridge.RecordOf(library) == null && ModsLogHasSince(mark, $"{village.name}'s Library was destroyed; its records of your"),
+					$"destroyed={library.hasBeenDestroyed} record={record(library)}"));
+			}
+
+			// Leave the world as found: nobody remembers or keeps what was taught here.
+			PlusBridge.Forget(faction);
+			PlusBridge.ForgetRecords(faction);
+			PlusBridge.SetConfig("readChance", readChance);
+			PlusBridge.SetConfig("libraryVisitChance", visitChance);
+		}
+
+		// Up to <paramref name="hours"/> hourly checks with <paramref name="c"/> standing in
+		// <paramref name="holder"/> (villagers wander off between them).
+		private IEnumerator StandIn(Character c, LocationStructure holder, int hours, Func<bool> done)
+		{
+			for (int i = 0; i < hours && !done() && !c.isDead; i++)
+			{
+				LocationGridTile spot = holder.passableTiles.FirstOrDefault(t => t.structure == holder && !t.isOccupied);
+				if (spot != null)
+				{
+					Try($"send {c.name} to {holder.name}", () => CharacterManager.Instance.Teleport(c, spot));
+				}
+				yield return WaitGameHours(1.05f, done);
+			}
+		}
+
 		// Phase 3: a resident none of their people has seen for a while is reported missing,
 		// and the village searches where they were last seen. Three residents are stranded in
 		// the wilderness at once, each one "last seen" there by the village: a restrained
@@ -4209,6 +4427,20 @@ namespace RuinarchDebug
 		{
 			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
 			return File.Exists(mods) && File.ReadAllText(mods).Contains(text);
+		}
+
+		private int ModsLogLength()
+		{
+			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
+			return File.Exists(mods) ? File.ReadAllText(mods).Length : 0;
+		}
+
+		// Whether mods.log has <paramref name="text"/> after the first <paramref name="mark"/> characters.
+		private bool ModsLogHasSince(int mark, string text)
+		{
+			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
+			string all = File.Exists(mods) ? File.ReadAllText(mods) : "";
+			return all.Length > mark && all.IndexOf(text, mark, StringComparison.Ordinal) >= 0;
 		}
 
 		// Whether mods.log has <paramref name="then"/> somewhere after the first <paramref name="first"/>.

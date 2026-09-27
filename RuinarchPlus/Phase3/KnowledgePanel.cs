@@ -102,9 +102,9 @@ namespace RuinarchPlus.Phase3
 			{
 				Faction faction = f;
 				List<LocationStructure> known = Knowledge.KnownStanding(faction);
-				string text = known.Count == 0
-					? $"{Name(faction.name)} know of you, but not where you are."
-					: $"{Name(faction.name)} know of {List(known)}.";
+				string text = (known.Count == 0
+					? $"{Name(faction.name)} know of you, but not where you are"
+					: $"{Name(faction.name)} know of {List(known)}") + Written(faction) + ".";
 				lines.Add(Pair("f:" + faction.persistentID, text,
 					() => UIManager.Instance.ShowFactionInfo(faction),
 					() => KnownList(faction)));
@@ -136,6 +136,25 @@ namespace RuinarchPlus.Phase3
 				return $"your {string.Join(", ", names)} and {more} more";
 			}
 			return "your " + (names.Count == 2 ? names[0] + " and " + names[1] : names[0]);
+		}
+
+		// Where the faction keeps records (Phase4/Records.cs): " (written in 3 homes and the
+		// Library of Andorlad)", or nothing.
+		private static string Written(Faction faction)
+		{
+			Phase4.Records.Summary(faction, out int homes, out List<NPCSettlement> libraries);
+			List<string> where = new List<string>();
+			if (homes > 0)
+			{
+				where.Add(homes == 1 ? "1 home" : $"{homes} homes");
+			}
+			if (libraries.Count > 0)
+			{
+				List<string> names = libraries.Select(v => v.name).ToList();
+				string villages = names.Count == 1 ? names[0] : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[names.Count - 1];
+				where.Add((libraries.Count == 1 ? "the Library of " : "the Libraries of ") + villages);
+			}
+			return where.Count == 0 ? "" : " (written in " + string.Join(" and ", where) + ")";
 		}
 
 		private static string KnownList(Faction faction)
