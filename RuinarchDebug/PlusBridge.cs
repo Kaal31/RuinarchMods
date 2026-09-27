@@ -365,6 +365,13 @@ namespace RuinarchDebug
 			MissingType?.GetMethod("Saw", Any)?.Invoke(null, new object[] { c, at });
 		}
 
+		/// <summary>Tell Ruinarch+ that <paramref name="finder"/>, one of their people, found
+		/// <paramref name="corpse"/> dead (as a burial does): their village stops searching.</summary>
+		internal static void MissingFoundDead(Character corpse, Character finder)
+		{
+			MissingType?.GetMethod("Buried", Any)?.Invoke(null, new object[] { corpse, finder });
+		}
+
 		/// <summary>"Seen", "Missing", "Searching" or "Lost"; null if untracked.</summary>
 		internal static string MissingState(Character c)
 		{
