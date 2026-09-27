@@ -241,40 +241,40 @@ namespace RuinarchDebug
 
 			FreshWorldChecks();
 			// Early, while villagers are out walking; leaves the camera as it found it.
-			if (Runs("FireWallTest")) { yield return FireWallTest(); }
-			if (Runs("PathLineTest")) { yield return PathLineTest(); }
-			if (Runs("ExploitSuite")) { yield return ExploitSuite(); }
+			if (Runs("FireWallTest")) { yield return Safe("FireWallTest", FireWallTest()); }
+			if (Runs("PathLineTest")) { yield return Safe("PathLineTest", PathLineTest()); }
+			if (Runs("ExploitSuite")) { yield return Safe("ExploitSuite", ExploitSuite()); }
 			// Needs a village with room for a Tavern-sized building; takes the fullest one.
 			// First, while the villages still have free space (later Mass Graves and
 			// Cemeteries fill it).
-			if (Runs("TierSuite")) { yield return TierSuite(); }
-			if (Runs("LifeSuite")) { yield return LifeSuite(); }
+			if (Runs("TierSuite")) { yield return Safe("TierSuite", TierSuite()); }
+			if (Runs("LifeSuite")) { yield return Safe("LifeSuite", LifeSuite()); }
 			// Needs three free villagers of one village, so it runs while the villages are
 			// full. Strands them in the wilderness; one never comes back.
-			if (Runs("MissingPersonsSuite")) { yield return MissingPersonsSuite(); }
-			if (Runs("MassGraveSuite")) { yield return MassGraveSuite(); }
+			if (Runs("MissingPersonsSuite")) { yield return Safe("MissingPersonsSuite", MissingPersonsSuite()); }
+			if (Runs("MassGraveSuite")) { yield return Safe("MassGraveSuite", MassGraveSuite()); }
 			// Knowledge takes the village with the most people left (the one the burial tests
 			// spared).
-			if (Runs("KnowledgeSuite")) { yield return KnowledgeSuite(); }
-			if (Runs("FogSuite")) { yield return FogSuite(); }
+			if (Runs("KnowledgeSuite")) { yield return Safe("KnowledgeSuite", KnowledgeSuite()); }
+			if (Runs("FogSuite")) { yield return Safe("FogSuite", FogSuite()); }
 			// Waits ~72 in-game hours, during which villages lose people to the world.
-			if (Runs("DecayTest")) { yield return DecayTest(); }
+			if (Runs("DecayTest")) { yield return Safe("DecayTest", DecayTest()); }
 			// Starves one village until famine, then feeds it; some villagers move away.
-			if (Runs("FamineSuite")) { yield return FamineSuite(); }
+			if (Runs("FamineSuite")) { yield return Safe("FamineSuite", FamineSuite()); }
 			// Kills a villager, wrecks a building and sets the village against its ruler twice.
-			if (Runs("UnrestSuite")) { yield return UnrestSuite(); }
-			if (Runs("HuntSuite")) { yield return HuntSuite(); }
-			if (Runs("TradeSuite")) { yield return TradeSuite(); }
+			if (Runs("UnrestSuite")) { yield return Safe("UnrestSuite", UnrestSuite()); }
+			if (Runs("HuntSuite")) { yield return Safe("HuntSuite", HuntSuite()); }
+			if (Runs("TradeSuite")) { yield return Safe("TradeSuite", TradeSuite()); }
 			// After the burial and knowledge tests: a plague answered with Exile makes the
 			// plagued Criminals, and Criminals take no village jobs (burial, construction).
-			if (Runs("CurfewSuite")) { yield return CurfewSuite(); }
+			if (Runs("CurfewSuite")) { yield return Safe("CurfewSuite", CurfewSuite()); }
 			// Last: it wipes a village out, which can end the world (player victory, and the
 			// game repopulating empty villages with new factions).
-			if (Runs("MigrationSuite")) { yield return MigrationSuite(); }
+			if (Runs("MigrationSuite")) { yield return Safe("MigrationSuite", MigrationSuite()); }
 			// A measurement that burns a village down: only when asked for by name.
-			if (_only.Contains("FireProbe")) { yield return FireProbe(); }
+			if (_only.Contains("FireProbe")) { yield return Safe("FireProbe", FireProbe()); }
 			// Kills everyone in a capital: only when asked for by name.
-			if (_only.Contains("CapitalLossSuite")) { yield return CapitalLossSuite(); }
+			if (_only.Contains("CapitalLossSuite")) { yield return Safe("CapitalLossSuite", CapitalLossSuite()); }
 
 			Finish("done");
 		}
@@ -1164,14 +1164,22 @@ namespace RuinarchDebug
 				yield return WaitGameHours(120f - (GameHours - start), () => PlusBridge.TownHallFor(village) != null);
 			}
 			LocationStructure hall = PlusBridge.TownHallFor(village);
-			if (hall == null && Villagers(village) < 3)
+			// Emptied, or the blueprint expired unbuilt (the game drops one nobody starts within
+			// 24h) and the village has no room left for another (a Mass Grave took the space):
+			// nothing left to build or measure.
+			string noBuild = hall != null ? null
+				: Villagers(village) < 3 ? $"{village.name} emptied during the build: {Describe(village)}"
+				: !PlusBridge.HasPendingTownHall(village) && !HasRoomFor(village, STRUCTURE_TYPE.TAVERN)
+					? $"{village.name}'s Town Hall blueprint expired unbuilt and there is no room left for another (the game's own placement check; {BlueprintState(village)})"
+				: null;
+			if (noBuild != null)
 			{
 				foreach (string name in new[] { "a grown village builds a Town Hall from materials", "the village is a Town once its Town Hall stands", "the Town is announced",
 					"the settlement panel names the tier", "the center's building panel names what the village is", "the tier is stored inside the player's save file",
 					"a Town reaching the city mark becomes a City", "a City keeps its tier just under the mark",
 					"a City far below the mark falls back to a Town", "destroying the Town Hall makes the Town a village again" })
 				{
-					Skip(name, $"{village.name} emptied during the build: {Describe(village)}");
+					Skip(name, noBuild);
 				}
 				RestoreTierConfig();
 				yield break;
@@ -3144,13 +3152,32 @@ namespace RuinarchDebug
 			// Done with the counterattack: call it off now, and take the outpost down.
 			CallOffCounterattacks(faction);
 			Guard("remove the outpost", () => RemoveTestBuilding(outpost));
+			// Its members are still by the outpost, fighting the Portal's defenders (who defend
+			// the player's buildings, as in the base game): out of the fight and home, or they
+			// die there and the witness checks below lose their villagers.
+			Guard("send the counterattackers home", () =>
+			{
+				Faction demons = PlayerManager.Instance.player.playerFaction;
+				foreach (Character r in Villages().Where(v => v.owner == faction).SelectMany(v => v.residents).Where(r => r != null && !r.isDead && r.hasMarker
+					&& r.homeSettlement?.cityCenter != null && r.combatComponent.hostilesInRange.Any(h => h is Character c && c.faction == demons)).ToList())
+				{
+					r.partyComponent.currentParty?.RemoveMember(r);
+					r.combatComponent.ClearHostilesInRange(false);
+					r.combatComponent.ClearAvoidInRange(false);
+					CharacterManager.Instance.Teleport(r, r.homeSettlement.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? r.homeSettlement.cityCenter.tiles.First());
+				}
+				return faction;
+			});
 
 			// Seeing is not knowing: a villager of the (aware) faction who sees the portal carries
 			// the news; their faction learns it only when they get home alive.
 			PlusBridge.Forget(faction);
+			// Villagers at home and not fighting: the called-off counterattack's members are
+			// still out by the removed outpost, in the Portal defenders' fight.
 			List<Character> witnesses = Villages().Where(v => v.owner == faction).SelectMany(v => v.residents).Where(r => r != null && !r.isDead && r.marker != null && r.limiterComponent.canWitness
 				&& r.race.IsSapient() && r.isNormalCharacter && !r.isAlliedWithPlayer && (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive) && r.carryComponent.isBeingCarriedBy == null
-				&& r != r.homeSettlement?.ruler && !r.isFactionLeader && r.homeSettlement?.cityCenter != null).Take(2).ToList();
+				&& r != r.homeSettlement?.ruler && !r.isFactionLeader && r.homeSettlement?.cityCenter != null
+				&& !r.combatComponent.isInCombat && r.gridTileLocation != null && r.gridTileLocation.IsPartOfSettlement(r.homeSettlement)).Take(2).ToList();
 			LocationGridTile near = portal.tiles.SelectMany(t => t.neighbourList).FirstOrDefault(t => t != null && t.structure != portal && !t.isOccupied);
 			if (witnesses.Count < 2 || near == null)
 			{
@@ -3179,6 +3206,21 @@ namespace RuinarchDebug
 				Check("a villager who sees the portal carries the news; their faction does not know yet", () =>
 					(PlusBridge.Carries(witness, portal) && !PlusBridge.Knows(faction, portal),
 					$"{witness.name} at {witness.gridTileLocation?.localPlace} carries={PlusBridge.Carries(witness, portal)} faction knows={PlusBridge.Knows(faction, portal)}"));
+				// Out of the Portal defenders' reach while the panel is read: open ground next to
+				// their village (not in it: back home they would tell their people at once).
+				LocationGridTile road = witness.homeSettlement?.areas.SelectMany(a => a.neighbourComponent.neighbours).Distinct()
+					.Where(a => !a.HasSettlementOnArea() && a.gridTileComponent.centerGridTile != null)
+					.Select(a => a.gridTileComponent.centerGridTile).FirstOrDefault(t => !t.isOccupied && t.IsPassable());
+				if (!witness.isDead && road != null)
+				{
+					Guard("take the witness away from the portal", () =>
+					{
+						witness.combatComponent.ClearHostilesInRange(false);
+						witness.combatComponent.ClearAvoidInRange(false);
+						CharacterManager.Instance.Teleport(witness, road);
+						return witness;
+					});
+				}
 				// The bookmarks panel's "Who Knows of You" section names the carrier.
 				yield return WaitGameHours(0.2f, null);
 				List<string> carrying = PlusBridge.KnowledgePanelLines() ?? new List<string>();
@@ -3188,24 +3230,44 @@ namespace RuinarchDebug
 				Check("the bookmarks panel shows who is carrying news of you", () =>
 					(header == "Who Knows of You" && carrying.Any(l => l.Contains(witness.name) && l.Contains("is carrying news of your") && l.Contains(portal.name)),
 					$"section header={header ?? "none"}; lines: {string.Join(" / ", carrying)}"));
-				LocationGridTile home = witness.homeSettlement.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? witness.homeSettlement.cityCenter.passableTiles.FirstOrDefault();
-				// Out of any party first: a party on a quest leads its members away again.
-				Guard("send the witness home", () =>
+				if (witness.isDead || witness.homeSettlement?.cityCenter == null)
 				{
-					witness.partyComponent.currentParty?.RemoveMember(witness);
-					CharacterManager.Instance.Teleport(witness, home);
-					return witness;
-				});
-				yield return WaitGameHours(3f, () => PlusBridge.Knows(faction, portal));
-				Check("back home, the witness teaches it to their faction", () =>
-					(PlusBridge.Knows(faction, portal) && !PlusBridge.Carries(witness, portal),
-					$"{witness.name} of {witness.faction?.name ?? "no faction"} (home {witness.homeSettlement?.name ?? "-"}) at {witness.gridTileLocation?.localPlace} in structure {witness.currentStructure?.name}/{witness.currentSettlement?.name ?? "-"} (owner {witness.currentSettlement?.owner?.name ?? "-"}), area {witness.gridTileLocation?.area?.GetFirstNPCSettlementOnArea()?.name ?? "the wild"}; known={PlusBridge.Knows(faction, portal)} carries={PlusBridge.Carries(witness, portal)}"));
-				yield return WaitGameHours(0.2f, null);
-				List<string> knowing = PlusBridge.KnowledgePanelLines() ?? new List<string>();
-				Check("the bookmarks panel shows what a faction knows", () =>
-					(knowing.Any(l => l.Contains(faction.name) && l.Contains("know of your") && l.Contains(portal.name))
-						&& !knowing.Any(l => l.Contains(witness.name) && l.Contains("is carrying")),
-					string.Join(" / ", knowing)));
+					Skip("back home, the witness teaches it to their faction", $"{witness.name} died by the portal (dead={witness.isDead})");
+					Skip("the bookmarks panel shows what a faction knows", $"{witness.name} died by the portal");
+				}
+				else
+				{
+					LocationGridTile home = witness.homeSettlement.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? witness.homeSettlement.cityCenter.passableTiles.FirstOrDefault();
+					// Out of any party and any fight first: a party on a quest leads its members
+					// away again, and the Portal's defenders attack whoever stands by it.
+					Guard("send the witness home", () =>
+					{
+						witness.partyComponent.currentParty?.RemoveMember(witness);
+						witness.combatComponent.ClearHostilesInRange(false);
+						witness.combatComponent.ClearAvoidInRange(false);
+						CharacterManager.Instance.Teleport(witness, home);
+						return witness;
+					});
+					yield return WaitGameHours(3f, () => PlusBridge.Knows(faction, portal) || witness.isDead);
+					if (witness.isDead && !PlusBridge.Knows(faction, portal))
+					{
+						// The news dies with them, as the doomed witness check above expects.
+						Skip("back home, the witness teaches it to their faction", $"{witness.name} was killed before telling anyone (the Portal's defenders hit them as they left)");
+						Skip("the bookmarks panel shows what a faction knows", $"{witness.name} was killed before telling anyone");
+					}
+					else
+					{
+						Check("back home, the witness teaches it to their faction", () =>
+							(PlusBridge.Knows(faction, portal) && !PlusBridge.Carries(witness, portal),
+							$"{witness.name} of {witness.faction?.name ?? "no faction"} (home {witness.homeSettlement?.name ?? "-"}) at {witness.gridTileLocation?.localPlace} in structure {witness.currentStructure?.name}/{witness.currentSettlement?.name ?? "-"} (owner {witness.currentSettlement?.owner?.name ?? "-"}), area {witness.gridTileLocation?.area?.GetFirstNPCSettlementOnArea()?.name ?? "the wild"}; known={PlusBridge.Knows(faction, portal)} carries={PlusBridge.Carries(witness, portal)}"));
+						yield return WaitGameHours(0.2f, null);
+						List<string> knowing = PlusBridge.KnowledgePanelLines() ?? new List<string>();
+						Check("the bookmarks panel shows what a faction knows", () =>
+							(knowing.Any(l => l.Contains(faction.name) && l.Contains("know of your") && l.Contains(portal.name))
+								&& !knowing.Any(l => l.Contains(witness.name) && l.Contains("is carrying")),
+							string.Join(" / ", knowing)));
+					}
+				}
 			}
 
 			yield return KnowledgeSaveRoundTrip(faction, portal);
@@ -3554,6 +3616,7 @@ namespace RuinarchDebug
 				victim.Death("autotest");
 				return captive;
 			});
+			float strandedAt = GameHours;
 			Log($"  captive {captive.name} restrained={captive.traitContainer.HasTrait("Restrained")} at {captive.gridTileLocation?.localPlace}, wanderer {wanderer.name} restrained={wanderer.traitContainer.HasTrait("Restrained")} at {wanderer.gridTileLocation?.localPlace} (far {far.localPlace}), victim {victim.name} dead={victim.isDead}");
 
 			// 1. The base game would roll a rescue for a restrained resident nobody saw.
@@ -3573,8 +3636,13 @@ namespace RuinarchDebug
 				Log($"  {who.name}: state={PlusBridge.MissingState(who) ?? "untracked"} lastSeen={PlusBridge.MissingLastSeen(who) ?? "-"} seenBy=[{string.Join(", ", seers)}] inHome={who.IsInHomeSettlement()}");
 			}
 			// Someone may come across the captive first and free them or carry them home (the
-			// base game's reaction to a restrained ally): then nobody misses them, rightly.
-			bool captiveFound = PlusBridge.MissingState(captive) == "Seen" && (captive.IsInHomeSettlement() || !captive.traitContainer.HasTrait("Restrained"));
+			// base game's reaction to a restrained ally), or just pass by and see them: then
+			// nobody misses them, rightly. Seen by a passer-by shows as a last sighting more
+			// recent than the stranding.
+			System.Text.RegularExpressions.Match ago = System.Text.RegularExpressions.Regex.Match(PlusBridge.MissingLastSeen(captive) ?? "", @"([\d.]+)h ago");
+			bool seenSince = ago.Success && float.TryParse(ago.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hoursAgo)
+				&& hoursAgo < GameHours - strandedAt - 0.5f;
+			bool captiveFound = PlusBridge.MissingState(captive) == "Seen" && (captive.IsInHomeSettlement() || !captive.traitContainer.HasTrait("Restrained") || seenSince);
 			if (captiveFound)
 			{
 				foreach (string name in new[] { "an unseen resident is reported missing", "the missing notice links to the person", "a captive left where they were seen is found and freed" })
@@ -3614,10 +3682,19 @@ namespace RuinarchDebug
 			// 3. The search goes where they were seen, not where they are.
 			PartyQuest search = null;
 			yield return WaitGameHours(2f, () => (search = PlusBridge.MissingSearch(wanderer)) != null);
-			if (search == null && PlusBridge.MissingState(wanderer) == "Seen")
+			if (PlusBridge.MissingState(wanderer) == "Seen")
 			{
-				Skip("the search heads for the last-seen spot, not where they are", $"{wanderer.name} was come across before a search was organised (last seen {PlusBridge.MissingLastSeen(wanderer)})");
-				Skip("the search is named as a search", "no search: the wanderer was found by chance");
+				// Found by chance, before or just after a search was organised: a search follows
+				// the latest sighting, which is now where they are.
+				Skip("the search heads for the last-seen spot, not where they are", $"{wanderer.name} was come across before the search set out (last seen {PlusBridge.MissingLastSeen(wanderer)})");
+				if (search == null)
+				{
+					Skip("the search is named as a search", "no search: the wanderer was found by chance");
+				}
+				else
+				{
+					Check("the search is named as a search", () => (search.GetPartyQuestName() == "Search for " + wanderer.name, "name=" + search.GetPartyQuestName()));
+				}
 			}
 			else
 			{
@@ -4141,6 +4218,46 @@ namespace RuinarchDebug
 			string text = File.Exists(mods) ? File.ReadAllText(mods) : "";
 			int at = text.IndexOf(first, StringComparison.Ordinal);
 			return at >= 0 && text.IndexOf(then, at + first.Length, StringComparison.Ordinal) >= 0;
+		}
+
+		// Runs a suite so that an exception in it (or in a coroutine it yields) is a FAIL and
+		// the run goes on with the next suite. Unity would end the whole run's coroutine, and
+		// the game would carry on with nothing left testing it. Nested coroutines are stepped
+		// here, since Unity runs those itself and an exception there never reaches this frame.
+		private IEnumerator Safe(string suite, IEnumerator run)
+		{
+			Stack<IEnumerator> stack = new Stack<IEnumerator>();
+			stack.Push(run);
+			while (stack.Count > 0)
+			{
+				bool more;
+				object current = null;
+				try
+				{
+					more = stack.Peek().MoveNext();
+					if (more)
+					{
+						current = stack.Peek().Current;
+					}
+				}
+				catch (Exception e)
+				{
+					Fail($"{suite} crashed; its remaining checks did not run", e.ToString());
+					yield break;
+				}
+				if (!more)
+				{
+					stack.Pop();
+				}
+				else if (current is IEnumerator inner)
+				{
+					stack.Push(inner);
+				}
+				else
+				{
+					yield return current;
+				}
+			}
 		}
 
 		private T Guard<T>(string what, Func<T> f) where T : class
