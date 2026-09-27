@@ -357,7 +357,9 @@ namespace RuinarchDebug
 			// in a crowded village no pit can ever be placed and the build tests measure nothing.
 			NPCSettlement bare = villages.Where(v => !v.HasStructure(STRUCTURE_TYPE.CEMETERY) && !v.HasStructure(STRUCTURE_TYPE.CULT_TEMPLE)
 					&& PitCount(v) == 0 && !PlusBridge.HasPendingBlueprint(v) && !v.HasJob(JOB_TYPE.PLACE_BLUEPRINT))
-				.OrderByDescending(v => HasRoomFor(v, STRUCTURE_TYPE.CEMETERY)).FirstOrDefault();
+				.OrderByDescending(v => HasRoomFor(v, STRUCTURE_TYPE.CEMETERY))
+				// The no-scatter tests kill two of its people; the rest must still build.
+				.ThenByDescending(v => v.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient())).FirstOrDefault();
 			NPCSettlement withCemetery = villages.FirstOrDefault(v => v.HasStructure(STRUCTURE_TYPE.CEMETERY));
 
 			if (bare == null)
@@ -537,6 +539,11 @@ namespace RuinarchDebug
 				Skip("villagers build a Mass Grave from materials", queued
 					? $"{village.name}'s blueprint expired unbuilt and there is no room left for another 5x5 building (the game's own placement check)"
 					: $"{village.name} has no room for a 5x5 building (the game's own placement check)");
+			}
+			else if (pit == null && village.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient()) < 2)
+			{
+				Skip("villagers build a Mass Grave from materials", $"{village.name} is down to "
+					+ $"{village.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient())} villager(s) after the no-scatter kills and the world's dangers: too few to gather and build");
 			}
 			else
 			{
@@ -1518,7 +1525,9 @@ namespace RuinarchDebug
 			}
 			yield return WaitGameHours(16f, () => PlusBridge.InFamine(village) == false);
 			Check("fed again, the famine ends", () =>
-				(PlusBridge.InFamine(village) == false && ModsLogHas($"The famine in {village.name} is over"), $"famine={PlusBridge.InFamine(village)}"));
+				(PlusBridge.InFamine(village) == false && ModsLogHas($"The famine in {village.name} is over"), $"famine={PlusBridge.InFamine(village)}; starving/inside={PlusBridge.FamineCount(village)}; "
+					+ string.Join(", ", village.residents.Where(c => c != null && !c.isDead && c.isNormalCharacter).Select(c =>
+						$"{c.name}[{c.needsComponent.fullness:F0}{(c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(village) ? "" : " away")}]"))));
 			PlusBridge.SetConfig("famineLeaveChance", 25);
 			PlusBridge.SetConfig("huntingEnabled", true);
 		}
@@ -1545,6 +1554,19 @@ namespace RuinarchDebug
 				Skip("unrest", "no village with a ruler and 6+ adult villagers: " + string.Join("; ", Villages().Select(Describe)));
 				yield break;
 			}
+			// Residents out at work, trading or hunting neither judge the ruler nor rise: bring
+			// the free ones home, so the rebels and the ruler's side are the whole village.
+			LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
+			Guard("bring the residents home", () =>
+			{
+				foreach (Character c in village.residents.Where(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && r.hasMarker
+					&& !PlusBridge.IsChild(r) && r.carryComponent.isBeingCarriedBy == null && !r.partyComponent.hasParty && !r.traitContainer.HasTrait("Restrained")
+					&& r.gridTileLocation != null && !r.gridTileLocation.IsPartOfSettlement(village)).ToList())
+				{
+					CharacterManager.Instance.Teleport(c, home);
+				}
+				return village;
+			});
 			Log($"unrest test village: {Describe(village)} ruler={village.ruler.name} (faction leader={village.ruler.isFactionLeader}) adults at home={adults(village).Count}");
 			PlusBridge.SetConfig("unrestEnabled", true);
 			PlusBridge.SetUnrest(village, 0f);
@@ -1664,6 +1686,8 @@ namespace RuinarchDebug
 				{
 					Guard("one against a loyal village", () =>
 					{
+						// Step 3 left the old ruler hurt if they kept the rule.
+						newRuler.ResetToFullHP();
 						foreach (Character c in loyal)
 						{
 							int now = c.relationshipContainer.GetTotalOpinion(newRuler);
@@ -1857,9 +1881,13 @@ namespace RuinarchDebug
 			// Up to half a day: at night the village's people are asleep and nobody sets out.
 			Character trader = null;
 			yield return WaitGameHours(12f, () => (trader = PlusBridge.SendTrader(from, to, 40)) != null);
+			LocationGridTile dest = to.mainStorage.passableTiles.FirstOrDefault();
 			Check("a village with food to spare sends a trader", () => (trader != null, trader == null
-				? "nobody went: " + string.Join(", ", from.residents.Where(c => c != null && !c.isDead && c.isNormalCharacter).Select(c =>
-					$"{c.name}[ruler={c == from.ruler} leader={c.isFactionLeader} move={c.limiterComponent.canMove} perform={c.limiterComponent.canPerform} party={c.partyComponent.hasParty} starving={c.needsComponent.isStarving} haul={c.jobQueue.HasJob(JOB_TYPE.HAUL)} hunting={PlusBridge.IsHunting(c)} inside={c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(from)}]"))
+				? $"nobody went; {from.name}'s storage: free tiles={from.mainStorage.tiles.Count(t => !t.isOccupied)}, food piles "
+					+ string.Join(" ", from.mainStorage.pointsOfInterest.OfType<ResourcePile>().Where(p => p.providedResource == RESOURCE.FOOD)
+						.Select(p => $"[{p.resourceInPile} owner={p.characterOwner?.name ?? "-"} carried={p.isBeingCarriedBy != null} state={p.mapObjectState} haulJob={p.HasJobTargetingThis(JOB_TYPE.HAUL)}]"))
+					+ "; villagers: " + string.Join(", ", from.residents.Where(c => c != null && !c.isDead && c.isNormalCharacter).Select(c =>
+					$"{c.name}[ruler={c == from.ruler} leader={c.isFactionLeader} move={c.limiterComponent.canMove} perform={c.limiterComponent.canPerform} party={c.partyComponent.hasParty} starving={c.needsComponent.isStarving} haul={c.jobQueue.HasJob(JOB_TYPE.HAUL)} hunting={PlusBridge.IsHunting(c)} inside={c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(from)} marker={c.hasMarker} child={PlusBridge.IsChild(c)} path={dest == null || c.movementComponent.HasPathToEvenIfDiffRegion(dest)}]"))
 				: $"{trader.name} ({trader.characterClass.className})"));
 			if (trader != null)
 			{

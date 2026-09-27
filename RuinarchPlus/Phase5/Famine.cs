@@ -14,7 +14,8 @@ namespace RuinarchPlus.Phase5
 	/// Starving at 20 or below, Malnourished at 0) but a village never notices that its
 	/// people are going hungry. Now a village where at least a third of the villagers have
 	/// been starving or malnourished for <c>famineHours</c> is in famine, until no more than
-	/// a tenth have been for as long. During a famine:
+	/// a tenth have been for as long. Only villagers in the village count; with fewer than
+	/// three there, no famine starts, and one under way holds until it is fed. During a famine:
 	/// - it is announced in the event log, and so is its end;
 	/// - nobody moves in (migration, <c>Phase4/MigrationHealth</c>);
 	/// - once a day each starving villager (not the ruler or faction leader) may leave, with
@@ -108,7 +109,8 @@ namespace RuinarchPlus.Phase5
 				States[s] = st = new State();
 			}
 			int starving = Starving(s, out int villagers);
-			if (villagers < 3)
+			// A village with fewer than three residents at all has no famine.
+			if (Residents(s).Count() < 3)
 			{
 				st.HungryHours = 0;
 				st.FedHours = 0;
@@ -118,7 +120,13 @@ namespace RuinarchPlus.Phase5
 				}
 				return;
 			}
-			st.HungryHours = starving * 3 >= villagers ? st.HungryHours + 1 : 0;
+			// With most of the village away (a search party, hunters, captives), too few are in
+			// it to start a famine on: the hunger clock holds. Whether those there are fed still
+			// counts, so a famine neither ends nor restarts just because people stepped out.
+			if (villagers >= 3)
+			{
+				st.HungryHours = starving * 3 >= villagers ? st.HungryHours + 1 : 0;
+			}
 			st.FedHours = starving * 10 <= villagers ? st.FedHours + 1 : 0;
 			int hours = Math.Max(1, RuinarchPlusConfig.Current.famineHours);
 			if (!st.Active)
