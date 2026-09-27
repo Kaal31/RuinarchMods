@@ -438,7 +438,7 @@ knowledge).
    remember, and after a while the faction loses where you are. Needs births, aging, illness
    and death (items 2 and 3) first, so it follows them.
 
-   **Implemented, not yet verified in game: records** (`Phase4/Records.cs`,
+   **Shipped: records** (`Phase4/Records.cs`,
    `Phase4/Library.cs`, config `recordsEnabled`, `readChance` 25, `libraryVisitChance` 10,
    `libraryBooks` 4; spec `docs/specs/2026-09-27-records-library-design.md`). A record is the
    game's own `BOOK` object: one per dwelling, written by any resident standing at home who
@@ -454,7 +454,8 @@ knowledge).
    A Book no longer in its holder drops its entries; a Library losing its last Book, or
    destroyed, is announced. Saved in `ModData/ruinarch.plus.records.json`
    (`kind|holderId|bookIds|structureIds`). The panel's faction line adds "(written in 3
-   homes and the Library of Andorlad)".
+   homes and the Library of Andorlad)". Books never fill a building's last two free tiles.
+   *(verified in game)*
 
 *Dependency:* population + food + war together drive Phase 5 settlement growth.
 

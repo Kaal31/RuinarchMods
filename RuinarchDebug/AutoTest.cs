@@ -737,7 +737,11 @@ namespace RuinarchDebug
 						count = n;
 					}
 				}
-				if (baseline >= 0.6f)
+				if (baselineCount == 0 || count == 0)
+				{
+					Skip("under curfew, residents stay home in their free time", $"nobody the curfew binds was found at home or out in free time ({baselineCount} before the plague, {count} under curfew); nothing to measure");
+				}
+				else if (baseline >= 0.6f)
 				{
 					Skip("under curfew, residents stay home in their free time", $"{baseline:P0} of {baselineCount} were home before the plague already; nothing to measure (under curfew {under:P0})");
 				}
@@ -2343,7 +2347,10 @@ namespace RuinarchDebug
 
 			// Forgetting: every villager of the faction grows forgetful (so nobody from another of
 			// its villages walks in and tells it again); each forgets the one building they
-			// know, and the village no longer knowing it is announced.
+			// know, and the village no longer knowing it is announced. Memory alone: with records
+			// on, a villager at home reads it back from the household's Book (RecordsSuite).
+			object records = PlusBridge.Config("recordsEnabled");
+			PlusBridge.SetConfig("recordsEnabled", false);
 			PlusBridge.Forget(faction);
 			PlusBridge.Learn(faction, portal);
 			yield return WaitGameHours(1.1f, null);
@@ -2362,6 +2369,10 @@ namespace RuinarchDebug
 			foreach (Character r in everyone)
 			{
 				PlusBridge.SetForgetful(r, false);
+			}
+			if (records != null)
+			{
+				PlusBridge.SetConfig("recordsEnabled", records);
 			}
 			if (elder != null)
 			{
@@ -3601,7 +3612,7 @@ namespace RuinarchDebug
 				PlusBridge.ForgetRecords(faction);
 				PlusBridge.RememberAtHome(writer, portal);
 				PlusBridge.WriteRecord(writer, house);
-				PlusBridge.Forget(faction);
+				PlusBridge.ForgetMemory(faction);
 				return house;
 			});
 			mark = ModsLogLength();
@@ -3617,7 +3628,7 @@ namespace RuinarchDebug
 				PlusBridge.ForgetRecords(faction);
 				PlusBridge.RememberAtHome(writer, portal);
 				PlusBridge.WriteRecord(writer, house);
-				PlusBridge.Forget(faction);
+				PlusBridge.ForgetMemory(faction);
 				book = PlusBridge.BooksOf(house).FirstOrDefault();
 				book?.AdjustHP(-book.currentHP, ELEMENTAL_TYPE.Normal);
 				return book;
@@ -3627,33 +3638,33 @@ namespace RuinarchDebug
 				(book != null && PlusBridge.RecordOf(house) == null && !PlusBridge.Remembers(reader, portal),
 				$"book on {book?.gridTileLocation?.localPlace.ToString() ?? "nothing"} record={record(house)} reader remembers={PlusBridge.Remembers(reader, portal)}"));
 
-			// 4. A Town or City queues a Library blueprint.
+			// 4. A Town or City queues a Library and its villagers build it. Capitals are Cities
+			// from the first hour, so theirs may be queued (or built) before this suite starts.
+			const string queuedCheck = "a Town or City queues a Library and its villagers build it";
 			string tier = PlusBridge.Tier(village);
 			if (tier == "Village")
 			{
-				Skip("a Town or City queues a Library blueprint", $"{village.name} is a village");
-			}
-			else if (PlusBridge.LibraryFor(village) != null)
-			{
-				Skip("a Town or City queues a Library blueprint", $"{village.name} already has a Library");
+				Skip(queuedCheck, $"{village.name} is a village");
 			}
 			else
 			{
-				mark = ModsLogLength();
 				string queued = $"{village.name} is a {tier}: queued a Library blueprint";
-				yield return WaitGameHours(6f, () => ModsLogHasSince(mark, queued));
-				if (!ModsLogHasSince(mark, queued) && !HasRoomFor(village, STRUCTURE_TYPE.WORKSHOP))
+				string placed = $"Library blueprint placed in {village.name}";
+				yield return WaitGameHours(6f, () => ModsLogHas(queued) || PlusBridge.LibraryFor(village) != null);
+				if (!ModsLogHas(queued) && PlusBridge.LibraryFor(village) == null && !HasRoomFor(village, STRUCTURE_TYPE.WORKSHOP))
 				{
-					Skip("a Town or City queues a Library blueprint", $"{village.name} has no room for a Workshop-sized building");
+					Skip(queuedCheck, $"{village.name} has no room for a Workshop-sized building");
 				}
 				else
 				{
-					Check("a Town or City queues a Library blueprint", () =>
-						(ModsLogHasSince(mark, queued), $"placeBlueprint job={village.HasJob(JOB_TYPE.PLACE_BLUEPRINT)}"));
+					yield return WaitGameHours(48f, () => PlusBridge.LibraryFor(village) != null);
+					Check(queuedCheck, () =>
+						(ModsLogHas(queued) && ModsLogHas(placed) && PlusBridge.LibraryFor(village) != null,
+						$"queued={ModsLogHas(queued)} placed={ModsLogHas(placed)} built={PlusBridge.LibraryFor(village)?.name ?? "no"} placeBlueprint job={village.HasJob(JOB_TYPE.PLACE_BLUEPRINT)}"));
 				}
 			}
 
-			// 5. The Library (built at once here: villagers take days) holds Books.
+			// 5. The Library (built at once if the villagers have not built one) holds Books.
 			LocationStructure library = PlusBridge.LibraryFor(village) ?? Guard("build a Library", () => PlusBridge.InstantBuildLibrary(village));
 			if (library == null)
 			{
@@ -3678,7 +3689,7 @@ namespace RuinarchDebug
 					PlusBridge.ForgetRecords(faction);
 					PlusBridge.RememberAtHome(writer, portal);
 					PlusBridge.WriteRecord(writer, library);
-					PlusBridge.Forget(faction);
+					PlusBridge.ForgetMemory(faction);
 					return library;
 				});
 				mark = ModsLogLength();
@@ -3733,12 +3744,19 @@ namespace RuinarchDebug
 		{
 			for (int i = 0; i < hours && !done() && !c.isDead; i++)
 			{
+				// Sent in on the hour's last tick, so they are still inside when the hourly check
+				// runs on the next one (left for an hour, villagers walk off to work or eat).
+				float deadline = Time.realtimeSinceStartup + 60f;
+				while (GameManager.Instance.Today().tick % GameManager.ticksPerHour != GameManager.ticksPerHour - 1 && Time.realtimeSinceStartup < deadline)
+				{
+					yield return null;
+				}
 				LocationGridTile spot = holder.passableTiles.FirstOrDefault(t => t.structure == holder && !t.isOccupied);
 				if (spot != null)
 				{
 					Try($"send {c.name} to {holder.name}", () => CharacterManager.Instance.Teleport(c, spot));
 				}
-				yield return WaitGameHours(1.05f, done);
+				yield return WaitGameHours(0.3f, done);
 			}
 		}
 

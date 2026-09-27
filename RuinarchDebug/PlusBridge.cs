@@ -314,7 +314,16 @@ namespace RuinarchDebug
 		/// <summary>A kind the game never replaces, which has young of its own.</summary>
 		internal static bool IsBreeder(RACE race) => LifeType?.GetField("Breeders", Any)?.GetValue(null) is HashSet<RACE> h && h.Contains(race);
 
+		/// <summary>The faction forgets the player: what its people remember and what its
+		/// records hold (a record would teach it straight back).</summary>
 		internal static void Forget(Faction faction)
+		{
+			ForgetMemory(faction);
+			ForgetRecords(faction);
+		}
+
+		/// <summary>The faction's people forget the player; its records stay.</summary>
+		internal static void ForgetMemory(Faction faction)
 		{
 			KnowledgeType?.GetMethod("Forget", Any)?.Invoke(null, new object[] { faction });
 		}

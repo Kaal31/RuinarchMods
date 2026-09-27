@@ -152,4 +152,4 @@ Behaviour (spec sections "Records", "Writing and reading"):
 
 ### Task 7 (on the user's go): in-game verification
 
-- [ ] `tools/run-autotest.sh 1500 RecordsSuite` twice, then a full regression.
+- [x] `tools/run-autotest.sh 1500 RecordsSuite` twice, then a full regression.

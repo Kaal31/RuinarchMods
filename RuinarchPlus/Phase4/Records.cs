@@ -197,10 +197,14 @@ namespace RuinarchPlus.Phase4
 
 		// ---- books -------------------------------------------------------------------------
 
+		// A Book goes on a free walkable tile inside, never one of the last two: villagers
+		// must still be able to walk in (a Workshop-sized Library has only a few).
+		private const int KeepFree = 2;
+
 		private static TileObject PlaceBook(LocationStructure holder)
 		{
 			List<LocationGridTile> free = holder.passableTiles?.Where(t => t != null && t.structure == holder && !t.isOccupied).ToList();
-			if (free == null || free.Count == 0)
+			if (free == null || free.Count <= KeepFree)
 			{
 				return null;
 			}
@@ -258,13 +262,13 @@ namespace RuinarchPlus.Phase4
 			return built;
 		}
 
-		/// <summary>Drop every record kept by <paramref name="faction"/>'s villages (test harness);
-		/// the Books stay as furniture.</summary>
+		/// <summary>Empty every record kept by <paramref name="faction"/>'s villages (test harness);
+		/// the Books stay, blank, so a Library is not furnished again.</summary>
 		internal static void Forget(Faction faction)
 		{
-			foreach (Record r in ByHolder.Values.Where(r => r.Holder.settlementLocation is NPCSettlement v && v.owner == faction).ToList())
+			foreach (Record r in ByHolder.Values.Where(r => r.Holder.settlementLocation is NPCSettlement v && v.owner == faction))
 			{
-				ByHolder.Remove(r.Holder);
+				r.Entries.Clear();
 			}
 		}
 

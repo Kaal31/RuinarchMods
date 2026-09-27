@@ -1,6 +1,6 @@
 # Records: home Books and the Library (Ruinarch+, Phase 4)
 
-Status: approved (2026-09-27). Plan: `docs/plans/2026-09-27-records-library.md`.
+Status: implemented and verified in game (2026-09-27). Plan: `docs/plans/2026-09-27-records-library.md`.
 
 ## Goal
 
@@ -183,9 +183,10 @@ record and nobody who remembers.
 2. With nobody left who remembers (dead, moved away, or forgotten like a forgetful elder), a
    member of the household reads it back from the Book.
 3. A Book destroyed while nobody remembers takes its record with it; nobody learns from it.
-4. A Town or City queues a Library blueprint (skipped with no room for a Workshop-sized
-   building).
-5. A Library (built at once; villagers take days) holds Books.
+4. A Town or City queues a Library blueprint and its villagers place and build it within
+   two days (capitals are Cities from the first hour, so this may happen before the suite
+   starts; skipped with no room for a Workshop-sized building).
+5. A Library (built at once only if the villagers have not built one) holds Books.
 6. A villager writes in the Library; with only the Library's record left and nobody who
    remembers, a villager goes there and reads it within a day.
 7. Records survive a save and load (`SaveAndRead`, `ReplayLoad`).
