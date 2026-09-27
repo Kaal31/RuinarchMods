@@ -1812,6 +1812,11 @@ namespace RuinarchDebug
 				Skip("a village sends hunters after wild animals", village == null ? "no village" : "no free wild tile next to the village");
 				yield break;
 			}
+			if (village.residents.Count(fighter) == 0)
+			{
+				Skip("a village sends hunters after wild animals", "no village has a free fighter left: " + string.Join("; ", Villages().Select(Describe)));
+				yield break;
+			}
 			Summon pig = Guard("put a pig near the village", () =>
 			{
 				Summon s = CharacterManager.Instance.CreateNewSummon(SUMMON_TYPE.Pig, null, homeLocation: null,
@@ -3677,9 +3682,11 @@ namespace RuinarchDebug
 				bool freed = !captive.traitContainer.HasTrait("Restrained");
 				bool announced = ModsLogHas($"{captive.name} of {village.name} has been found.");
 				// After being found, they may die or move away later; the record is then dropped.
+				// Or they go missing again (killed out of sight, say): a new case, opened anew.
 				string state = PlusBridge.MissingState(captive);
-				return (freed && announced && (state == "Seen" || state == null),
-					$"freed={freed} announced={announced} state={state ?? $"dropped (dead={captive.isDead} home={captive.homeSettlement?.name ?? "-"})"}");
+				bool again = ModsLogHasAfter($"{captive.name} of {village.name} has been found.", $"{captive.name} of {village.name} has gone missing");
+				return (freed && announced && (state == "Seen" || state == null || again),
+					$"freed={freed} announced={announced} missing again={again} state={state ?? $"dropped (dead={captive.isDead} home={captive.homeSettlement?.name ?? "-"})"}");
 			});
 			// The world can wipe the test village out mid-test (famine, monsters). A village
 			// with no owner keeps no records: nothing left to check.
@@ -3848,7 +3855,8 @@ namespace RuinarchDebug
 		// no standing player building is on. Seen in runs: a destroyed building's area stayed
 		// in the player settlement, and the player's demons patrol every area of it: they
 		// crossed the map to it, killing villagers on the way. (A building already destroyed,
-		// say by a counterattack, no longer lists its tiles: hence every empty area.)
+		// say by a counterattack, no longer lists its tiles: hence every empty area.) Demons
+		// already out defending it keep fighting wherever they are: they are sent home.
 		private static LocationStructure RemoveTestBuilding(LocationStructure building)
 		{
 			if (!building.hasBeenDestroyed)
@@ -3859,6 +3867,18 @@ namespace RuinarchDebug
 			foreach (Area area in ps.areas.Where(a => !ps.allStructures.Any(s => !s.hasBeenDestroyed && s.HasTileOnArea(a))).ToList())
 			{
 				ps.RemoveAreaFromSettlement(area);
+			}
+			LocationStructure portal = ps.GetFirstStructureOfType(STRUCTURE_TYPE.THE_PORTAL);
+			LocationGridTile home = portal?.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? portal?.GetCenterTile();
+			if (home != null)
+			{
+				foreach (Character demon in PlayerManager.Instance.player.playerFaction.characters.Where(c => c != null && !c.isDead && c.hasMarker
+					&& c.gridTileLocation != null && !c.gridTileLocation.IsPartOfSettlement(ps)).ToList())
+				{
+					demon.combatComponent.ClearHostilesInRange(false);
+					demon.combatComponent.ClearAvoidInRange(false);
+					CharacterManager.Instance.Teleport(demon, home);
+				}
 			}
 			return building;
 		}
@@ -4112,6 +4132,15 @@ namespace RuinarchDebug
 		{
 			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
 			return File.Exists(mods) && File.ReadAllText(mods).Contains(text);
+		}
+
+		// Whether mods.log has <paramref name="then"/> somewhere after the first <paramref name="first"/>.
+		private bool ModsLogHasAfter(string first, string then)
+		{
+			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
+			string text = File.Exists(mods) ? File.ReadAllText(mods) : "";
+			int at = text.IndexOf(first, StringComparison.Ordinal);
+			return at >= 0 && text.IndexOf(then, at + first.Length, StringComparison.Ordinal) >= 0;
 		}
 
 		private T Guard<T>(string what, Func<T> f) where T : class
