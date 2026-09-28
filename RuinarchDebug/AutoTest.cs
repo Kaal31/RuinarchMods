@@ -2357,8 +2357,9 @@ namespace RuinarchDebug
 						}
 						return PlusBridge.VillageKnows(other, portal);
 					});
+					// Anyone of the witness's village who remembers may be standing there first.
 					Check("someone who remembers tells the faction's other village they stand in", () =>
-						(PlusBridge.VillageKnows(other, portal) && ModsLogHas($"{witness.name} brought word of {portal.name} to {other.name}"),
+						(PlusBridge.VillageKnows(other, portal) && ModsLogHas($" brought word of {portal.name} to {other.name}"),
 						$"{other.name} knows={PlusBridge.VillageKnows(other, portal)}; {witness.name} at {witness.gridTileLocation?.localPlace} in {witness.currentSettlement?.name ?? "the wild"}"));
 				}
 				else
