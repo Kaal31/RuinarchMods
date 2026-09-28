@@ -22,16 +22,23 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
   `ActionState(name, durationTicks, success, describe)`.
 - [x] `ContentRegistry.ActionsByType`; `AllocateValue<T>` (structures and actions keep
   separate spaces).
-- [x] `RegisterAction`: states into `GoapActionStateDB.goapActionStates` at registration.
+- [x] `RegisterAction`: allocates the type. States go into `GoapActionStateDB.goapActionStates`
+  in `Patch_ActionData` (its static constructor needs `GameManager`; touching it from
+  `OnLoad` broke the class for the session, found by the first ShelfProbe run).
   Names: the game rebuilds `_interactionTypeStrings` in `StringEnumLookUp.Initialize` at the
   main menu (after mods load), so a postfix adds them there (`Patch_ActionNames`).
   `ActionTypeFor(id)`.
 - [x] `Patch_ActionData`: postfix on `ConstructGoapActionData` adds each action to
   `goapActionData`, `goapActionList`, `actionsCategorizedByEffectCondition`.
 - [x] Lookups keyed by `INTERACTION_TYPE`: all dictionaries (states, instances, names,
-  action trackers, job other-data); thought bubble and invalidity logs check for a missing
-  text key; the description log is patched (`Patch_ActionDescription`, from `Describe`,
-  table `"ModContent"`), and `Log.ResetText` keeps fixed text (`Patch_FixedTextLog`).
+  action trackers, job other-data); invalidity logs check for a missing text key; the
+  description log is patched (`Patch_ActionDescription`, from `Describe`, table
+  `"ModContent"`), and `Log.ResetText` keeps fixed text (`Patch_FixedTextLog`).
+- [x] Thought bubbles: `CreateThoughtBubbleLog` checks for a missing key, but its one
+  reader (`GetCurrentLog`, used by `CharacterVisuals.GetThoughtBubble`: map nameplate,
+  panel, tooltip) does not, and threw inside `Faction.LeaveFaction` in RecordsSuite run 2.
+  `Patch_ActionThoughtBubble` gives every registered action both bubbles (`Going`/`Doing`
+  on the registration, defaults from the name).
 - [x] Framework builds; `check-patches.sh`: 19 patch classes, 0 failures.
 
 ### Task 2: framework docs
@@ -72,8 +79,12 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
 
 ### Task 7 (on the user's go): in game
 
-- [ ] `run-autotest.sh 1200 ShelfProbe`; update the spec with the shelf findings.
-- [ ] `run-autotest.sh 1500 RecordsSuite` twice, then two full regressions.
+- [x] `run-autotest.sh 1200 ShelfProbe` (after the `GoapActionStateDB` fix): both actions
+  registered with their states; spec updated with the shelf findings.
+- [ ] `run-autotest.sh 1500 RecordsSuite` twice, then two full regressions. Runs 1-2 (before
+  the thought bubble fix): writing, reading, free-time writing, carriers, Library reading
+  and saves passed. Harness-given jobs were IDLE (priority 250) and waited behind work;
+  the bridge now gives them as VISIT_STRUCTURE (1000).
 - [ ] Commit and push both repos after each green step.
 
 ### Task 8: releases

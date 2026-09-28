@@ -350,9 +350,12 @@ namespace RuinarchDebug
 		internal static INTERACTION_TYPE RecordAction(bool write) =>
 			Plus?.GetType("RuinarchPlus.Phase4.RecordActions")?.GetProperty(write ? "Write" : "Read", Any)?.GetValue(null) is INTERACTION_TYPE t ? t : INTERACTION_TYPE.NONE;
 
-		/// <summary>Give <paramref name="c"/> the Write or Read job at <paramref name="carrier"/>.</summary>
+		/// <summary>Give <paramref name="c"/> the Write or Read job at <paramref name="carrier"/>
+		/// now. Ruinarch+ plans these as IDLE jobs (priority 250) in free time, where any work
+		/// comes first; a test asks for it at once, so the job is a VISIT_STRUCTURE (1000),
+		/// which outranks work and sleep.</summary>
 		internal static void PlanRecordAction(Character c, bool write, TileObject carrier) =>
-			RecordsType?.GetMethod("Plan", Any)?.Invoke(null, new object[] { c, RecordAction(write), carrier });
+			c.PlanIdle(JOB_TYPE.VISIT_STRUCTURE, RecordAction(write), carrier);
 
 		internal static LocationStructure LibraryFor(BaseSettlement settlement) =>
 			Plus?.GetType("Inner_Maps.Location_Structures.Library")?.GetMethod("FindFor", Any)?.Invoke(null, new object[] { settlement }) as LocationStructure;

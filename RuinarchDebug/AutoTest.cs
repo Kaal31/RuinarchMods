@@ -3660,14 +3660,16 @@ namespace RuinarchDebug
 				&& r.marker != null && r.carryComponent.isBeingCarriedBy == null && r.limiterComponent.canMove
 				&& (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive);
 			// A household of two who can be sent home, in a village of a major faction; Towns and
-			// Cities first, since they build Libraries.
+			// Cities first, since they build Libraries, and homes with a Book Shelf first, so the
+			// shelf (not a placed Book) carries the record where the world has one.
 			LocationStructure house = null;
 			NPCSettlement village = null;
 			Character writer = null, reader = null;
 			foreach (NPCSettlement v in Villages().Where(v => v.owner != null && v.owner.isMajorNonPlayer).OrderByDescending(v => PlusBridge.Tier(v) != "Village"))
 			{
 				List<LocationStructure> dwellings = v.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>();
-				foreach (LocationStructure d in dwellings.Where(d => !d.hasBeenDestroyed && d.passableTiles.Any(t => t.structure == d && !t.isOccupied)))
+				foreach (LocationStructure d in dwellings.Where(d => !d.hasBeenDestroyed && d.passableTiles.Any(t => t.structure == d && !t.isOccupied))
+					.OrderByDescending(d => d.GetTileObjectsOfType(TILE_OBJECT_TYPE.SHELF_BOOKS)?.Any(t => t.mapObjectState == MAP_OBJECT_STATE.BUILT) == true))
 				{
 					List<Character> household = d.residents.Where(able).ToList();
 					if (household.Count >= 2)
@@ -3709,13 +3711,21 @@ namespace RuinarchDebug
 			int mark = ModsLogLength();
 			TileObject carrier = Guard("teach the writer and find the household's carrier", () => { PlusBridge.RememberAtHome(writer, portal); return PlusBridge.CarrierFor(house, true); });
 			bool sawWriting = false;
+			// What the villager's nameplate, panel and tooltip show (CharacterVisuals.GetThoughtBubble),
+			// which throws for an action without thought bubble logs.
+			HashSet<string> bubbles = new HashSet<string>();
 			if (carrier != null)
 			{
 				Log($"  household carrier: {carrier.name} ({PlusBridge.CarriersOf(house).Count} in {house.name})");
 				Guard("give the writer the Write job", () => { SendInto(writer, house); PlusBridge.PlanRecordAction(writer, true, carrier); return writer; });
 				yield return WaitGameHours(6f, () =>
 				{
-					sawWriting |= writer.currentActionNode?.goapType == writeType;
+					if (writer.currentActionNode?.goapType == writeType)
+					{
+						sawWriting = true;
+						try { bubbles.Add(writer.visuals.GetThoughtBubble() ?? "null"); }
+						catch (Exception e) { bubbles.Add(e.GetType().Name); }
+					}
 					return PlusBridge.RecordOf(house)?.Contains(portal) == true;
 				});
 				yield return WaitGameHours(0.1f, null);
@@ -3724,6 +3734,8 @@ namespace RuinarchDebug
 				(PlusBridge.RecordOf(house)?.Contains(portal) == true && sawWriting && LogsOf(carrier, wrote).Count > 0
 					&& ModsLogHasSince(mark, $"A household in {village.name} started keeping a record"),
 				$"record={record(house)} sawWriting={sawWriting} carrier {describeCarrier(carrier)}; writer {writer.name} in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
+			Check("a writing villager's thought bubble says what they are doing", () =>
+				(bubbles.Count > 0 && bubbles.All(b => b == "Going to write." || b == "Writing."), $"bubbles=[{string.Join(" | ", bubbles)}]"));
 			List<string> panel = PlusBridge.KnowledgePanelLines() ?? new List<string>();
 			Check("the bookmarks panel says where a faction keeps records", () =>
 				(panel.Any(l => l.Contains(faction.name) && l.Contains("(written in ") && l.Contains("home")), string.Join(" / ", panel)));

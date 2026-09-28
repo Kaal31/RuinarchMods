@@ -26,14 +26,18 @@ namespace RuinarchPlus.Phase4
 				Id = WriteId,
 				Name = "WRITE_RECORD",
 				Factory = () => new WriteRecord(),
-				States = { new ActionState(WriteRecord.State, Duration, success: true, describe: n => Records.DescribeWrite(n.actor, n.poiTarget as TileObject)) }
+				States = { new ActionState(WriteRecord.State, Duration, success: true, describe: n => Records.DescribeWrite(n.actor, n.poiTarget as TileObject)) },
+				Going = n => "Going to write.",
+				Doing = n => "Writing."
 			});
 			ModContent.RegisterAction(new ActionRegistration
 			{
 				Id = ReadId,
 				Name = "READ_RECORD",
 				Factory = () => new ReadRecord(),
-				States = { new ActionState(ReadRecord.State, Duration, success: true, describe: n => Records.DescribeRead(n.actor, n.poiTarget as TileObject)) }
+				States = { new ActionState(ReadRecord.State, Duration, success: true, describe: n => Records.DescribeRead(n.actor, n.poiTarget as TileObject)) },
+				Going = n => "Going to read.",
+				Doing = n => "Reading."
 			});
 		}
 	}

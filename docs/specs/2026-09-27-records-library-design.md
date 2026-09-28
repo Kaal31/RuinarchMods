@@ -36,7 +36,9 @@ knowledge when a villager reads it.
   only inside a `MAGIC_ACADEMY` (`Book.cs:21`); elsewhere it is plain furniture.
 - `TILE_OBJECT_TYPE.SHELF_BOOKS` (class `ShelfBooks`, shown as "Book Shelf"): furniture
   with no behaviour of its own, placed by the building prefabs that include one. Which
-  prefabs do is asset data, not code: a probe in game lists them (see Order of work).
+  prefabs do is asset data, not code. `ShelfProbe` (2026-09-28, a Large world of Human
+  villages): 6 of 16 dwellings had a built Book Shelf; city centres, fisheries and mines
+  had none. So most homes get a placed Book; other cultures are not surveyed yet.
 - The Magic Academy is placed only by Elven Kingdom villagers, one per region
   (`CharacterClassBehaviour.cs:22,50`, `PlaceBlueprint.cs:19`). No library exists.
 - Structure prefabs are looked up per faction type, falling back to `FACTION_TYPE.None`
