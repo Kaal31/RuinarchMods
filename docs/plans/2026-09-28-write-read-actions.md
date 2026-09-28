@@ -15,77 +15,60 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
 
 ### Task 1: framework `RegisterAction`
 
-**Files:** `src/Ruinarch.ModContent/ActionRegistration.cs` (new), `ModContent.cs`,
-`ContentRegistry.cs`, `ContentPatches.cs`.
+**Files:** `src/Ruinarch.ModContent/ActionRegistration.cs` (new), `ActionPatches.cs` (new),
+`ModContent.cs`, `ContentRegistry.cs`.
 
-- [ ] `ActionRegistration { Id, Name, Factory (Func<GoapAction>), States (List<ActionState>),
-  Type (filled in) }`, `ActionState(name, durationTicks, success)`.
-- [ ] `ContentRegistry`: `ActionsByType`, `Actions`; `AllocateValue` takes any
-  `ICollection<int>`-like set of taken values (structures and actions keep separate spaces).
-- [ ] `ModContent.RegisterAction(reg)`: validate, allocate, add the name to
-  `StringEnumLookUp._interactionTypeStrings` and the states to
-  `GoapActionStateDB.goapActionStates` (both static dictionaries, set by reflection) at
-  registration, before any factory runs. `ActionTypeFor(id)`.
-- [ ] Postfix on `InteractionManager.ConstructGoapActionData`: add `Factory()` for each
-  registration to `goapActionData`.
-- [ ] Grep RuinarchRE for every other lookup keyed by `INTERACTION_TYPE` that a virtual
-  value can reach from a job on a tile object (object pools, icon lookups, save data,
-  `ToStringEnum` callers with switch defaults); handle each the same way or document why it
-  is unreachable.
-- [ ] Build the framework; zero errors.
+- [x] `ActionRegistration { Id, Name, Factory, States, Type }`,
+  `ActionState(name, durationTicks, success, describe)`.
+- [x] `ContentRegistry.ActionsByType`; `AllocateValue<T>` (structures and actions keep
+  separate spaces).
+- [x] `RegisterAction`: states into `GoapActionStateDB.goapActionStates` at registration.
+  Names: the game rebuilds `_interactionTypeStrings` in `StringEnumLookUp.Initialize` at the
+  main menu (after mods load), so a postfix adds them there (`Patch_ActionNames`).
+  `ActionTypeFor(id)`.
+- [x] `Patch_ActionData`: postfix on `ConstructGoapActionData` adds each action to
+  `goapActionData`, `goapActionList`, `actionsCategorizedByEffectCondition`.
+- [x] Lookups keyed by `INTERACTION_TYPE`: all dictionaries (states, instances, names,
+  action trackers, job other-data); thought bubble and invalidity logs check for a missing
+  text key; the description log is patched (`Patch_ActionDescription`, from `Describe`,
+  table `"ModContent"`), and `Log.ResetText` keeps fixed text (`Patch_FixedTextLog`).
+- [x] Framework builds; `check-patches.sh`: 19 patch classes, 0 failures.
 
 ### Task 2: framework docs
 
-- [ ] `docs/ASSETS_AND_CONTENT.md`: "Adding a new action" for strangers (what an action is
-  in the game, the registration, a minimal action class, making a job for it, logs, saves).
-- [ ] README feature line; no em-dashes.
+- [x] `docs/ASSETS_AND_CONTENT.md` "Adding a new action"; `CONTENT_FRAMEWORK.md` patch
+  table and API; README lines. No em-dashes.
 
 ### Task 3: the two actions (Ruinarch+)
 
-**Files:** `RuinarchPlus/Phase4/RecordActions.cs` (new), `RuinarchPlus.cs` (registration
-before `PatchAll`-dependent code runs).
-
-- [ ] `WriteRecord : GoapAction` and `ReadRecord : GoapAction`: `NEAR_TARGET`,
-  `GoapActionStateDB.Read_Icon`, one state ("Write Success" / "Read Success", 20 ticks),
-  `AreRequirementsSatisfied` (target built, a carrier of a holder, actor counted by
-  `Knowledge`), `Perform` sets the state, `AfterWriteSuccess` / `AfterReadSuccess` call
-  `Records.Write` / `Records.ReadFrom` and log.
-- [ ] Suppress the game's own description log if it produces empty or broken text for an
-  unknown action name (check `ActualGoapNode.CreateDescriptionLog`).
+- [x] `Phase4/RecordActions.cs`: `WriteRecord`, `ReadRecord` (`NEAR_TARGET`, Read icon, one
+  20-tick state, requirement: the target is a carrier), `AfterWriteSuccess` /
+  `AfterReadSuccess` call `Records.Wrote` / `Records.ReadAt`; `Describe` gives the log
+  text. Registered from `Records.Register` (in `OnLoad`).
 
 ### Task 4: records on shelves, free-time trigger
 
-**Files:** `RuinarchPlus/Phase4/Records.cs`, `Phase3/Knowledge.cs` if needed.
-
-- [ ] Carriers: a record's objects are the holder's `SHELF_BOOKS` when it has any, else
-  placed Books (`PlaceBook`, keeps two tiles free). Home: taken at first Write. Library:
-  taken or placed when first seen built (`Furnish`).
-- [ ] Record lost when every carrier is gone (`Prune`), including shelves.
-- [ ] `Records.JobFor(c)`: the free-time decision (home Write, home Read with `readChance`,
-  Library Write/Read with `libraryVisitChance`, curfew blocks the Library), once per
-  villager per game hour. Job built like `Character.TryCreateJobForSpecificAction`.
-- [ ] Replace `Records_LibraryVisit` (the `RunBehaviour` prefix) with the new trigger.
-- [ ] Remove instant writing and reading from `HourlyCheck`.
-- [ ] Log helper: one log with actor and carrier as fillers, fixed text, added to the
-  database (as `Curfew.Post` does, plus the carrier filler).
-- [ ] Save format unchanged; carriers may be shelves.
-- [ ] Build; zero errors.
+- [x] Carriers (`SHELF_BOOKS`, else placed Books), `Ensure`/`Bare`/`CarrierFor`, `Furnish`.
+- [x] Record lost when every carrier is gone (`Bare`, from `Prune` and before a new write).
+- [x] `Records.JobFor` + `Records_FreeTime` (priority High, ahead of the curfew's prefix);
+  job via `PlanIdle(JOB_TYPE.IDLE, action, carrier)`.
+- [x] Instant writing and reading removed from `HourlyCheck`.
+- [x] Save format unchanged (`kind|holder|carriers|structures`).
+- [x] Builds; 95 patch classes, 0 failures.
 
 ### Task 5: config, README, design doc
 
-- [ ] `Config.cs` comments for `readChance`, `libraryVisitChance`, `libraryBooks`.
-- [ ] RuinarchPlus README records row and config rows; design doc Phase 4 item.
-- [ ] `mod.json`: requires RuinarchModLoader v0.5.0 (release notes too).
+- [x] `Config.cs` comment; README records and config rows; design doc Phase 4 item.
+- [ ] At release: the notes say Ruinarch+ 0.9.0 needs RuinarchModLoader v0.5.0 (`mod.json`
+  has no requirement field).
 
 ### Task 6: harness
 
-**Files:** `RuinarchDebug/PlusBridge.cs`, `RuinarchDebug/AutoTest.cs`.
-
-- [ ] Bridge: carriers of a holder, queue Write/Read job, action types registered.
-- [ ] `ShelfProbe` (run by name): per culture, which structure types in live villages have
-  `SHELF_BOOKS`; both actions present in `goapActionData`, `goapActionStates`, name table.
-- [ ] `RecordsSuite` rewritten to the spec's ten checks.
-- [ ] Build both mods; zero errors.
+- [x] Bridge: `CarriersOf`, `CarrierFor`, `RecordAction`, `PlanRecordAction`.
+- [x] `ShelfProbe` (run by name).
+- [x] `RecordsSuite` rewritten (spec checks 1-7, 9, 10); check 8 in `CurfewSuite`
+  (`CurfewRecordsTest`); `LogsOf` reads a carrier's Logs tab from the game's log database.
+- [x] Both mods build.
 
 ### Task 7 (on the user's go): in game
 

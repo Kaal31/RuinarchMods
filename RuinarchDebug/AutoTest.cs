@@ -279,6 +279,8 @@ namespace RuinarchDebug
 			if (_only.Contains("FireProbe")) { yield return Safe("FireProbe", FireProbe()); }
 			// Kills everyone in a capital: only when asked for by name.
 			if (_only.Contains("CapitalLossSuite")) { yield return Safe("CapitalLossSuite", CapitalLossSuite()); }
+			// A survey of the world's Book Shelves: only when asked for by name.
+			if (_only.Contains("ShelfProbe")) { yield return Safe("ShelfProbe", ShelfProbe()); }
 
 			Finish("done");
 		}
@@ -785,11 +787,38 @@ namespace RuinarchDebug
 					Check("under curfew, residents stay home in their free time", () =>
 						(count > 0 && under > baseline && (under >= 0.6f || under - baseline >= 0.25f), $"home share {under:P0} of {count} (before plague {baseline:P0})"));
 				}
+				yield return CurfewRecordsTest(village);
 				yield return ClosedBordersTest(village);
 				Guard("end plague event", () => { village.eventManager.DeactivateEvent(plague); return plague; });
 				Check("curfew lifts when the plague event ends", () =>
 					(!PlusBridge.IsUnderCurfew(village), $"underCurfew={PlusBridge.IsUnderCurfew(village)}"));
 			}
+		}
+
+		// Records under curfew: the records' free-time prefix runs before the curfew's, so a
+		// villager kept home still writes there (and none goes to the Library).
+		private IEnumerator CurfewRecordsTest(NPCSettlement village)
+		{
+			const string name = "under curfew, villagers kept home still write there";
+			LocationStructure portal = PlayerManager.Instance.player.playerSettlement.GetFirstStructureOfType(STRUCTURE_TYPE.THE_PORTAL);
+			Character teller = village.residents.FirstOrDefault(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && !r.isAlliedWithPlayer);
+			if (!PlusBridge.RecordsAvailable || !(PlusBridge.Config("recordsEnabled") is bool on) || !on || portal == null || teller == null)
+			{
+				Skip(name, !PlusBridge.RecordsAvailable ? "RuinarchPlus (with records) not loaded" : portal == null ? "no portal" : "no villager who can remember");
+				yield break;
+			}
+			Faction faction = village.owner;
+			PlusBridge.ForgetRecords(faction);
+			Guard("teach the village", () => { PlusBridge.RememberAtHome(teller, portal); return teller; });
+			int mark = ModsLogLength();
+			Func<List<LocationStructure>> written = () => (village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>())
+				.Where(d => PlusBridge.RecordOf(d)?.Contains(portal) == true).ToList();
+			yield return WaitGameHours(30f, () => written().Count > 0 || !PlusBridge.IsUnderCurfew(village));
+			Check(name, () =>
+				(PlusBridge.IsUnderCurfew(village) && written().Count > 0 && ModsLogHasSince(mark, $"wrote of your {portal.name}"),
+				$"underCurfew={PlusBridge.IsUnderCurfew(village)} homes with the record: {string.Join(", ", written().Select(d => d.name))}"));
+			PlusBridge.Forget(faction);
+			PlusBridge.ForgetRecords(faction);
 		}
 
 		// Phase 2: a village under curfew turns visitors away. An outsider (a villager of
@@ -3614,10 +3643,11 @@ namespace RuinarchDebug
 			}
 		}
 
-		// Phase 4: records. Households write what they remember of the player's buildings into
-		// a Book at home, a Town or City builds a Library, and villagers read the records back
-		// into memory once nobody who remembers is around. The faction is never made aware of
-		// the player (no counterattacks), and it forgets everything taught here at the end.
+		// Phase 4: records. Households keep what they remember of the player's buildings on a
+		// Book Shelf (or a Book) at home, a Town or City builds a Library, and villagers write
+		// and read them through two real actions (an hour at the shelf, a line in its Logs tab).
+		// The faction is never made aware of the player (no counterattacks), and it forgets
+		// everything taught here at the end.
 		private IEnumerator RecordsSuite()
 		{
 			if (!PlusBridge.RecordsAvailable || !(PlusBridge.Config("recordsEnabled") is bool on) || !on)
@@ -3663,27 +3693,79 @@ namespace RuinarchDebug
 			Log($"records test village: {Describe(village)} tier={PlusBridge.Tier(village)}; household {house.name}: writer {writer.name}, reader {reader.name}");
 			object readChance = PlusBridge.Config("readChance");
 			object visitChance = PlusBridge.Config("libraryVisitChance");
-			PlusBridge.SetConfig("readChance", 100);
-			PlusBridge.SetConfig("libraryVisitChance", 100);
+			// No free-time reading unless a check asks for it.
+			PlusBridge.SetConfig("readChance", 0);
+			PlusBridge.SetConfig("libraryVisitChance", 0);
 			PlusBridge.Forget(faction);
 			PlusBridge.ForgetRecords(faction);
 			Func<LocationStructure, string> record = h => PlusBridge.RecordOf(h) is HashSet<LocationStructure> set ? "[" + string.Join(", ", set.Select(s => s.name)) + "]" : "none";
+			INTERACTION_TYPE writeType = PlusBridge.RecordAction(true);
+			string wrote = $"wrote of your {portal.name}";
+			string read = $"read of your {portal.name}";
+			Func<TileObject, string> describeCarrier = t => t == null ? "none" : $"{t.name} at {t.gridTileLocation?.localPlace}; its logs: [{string.Join(" | ", LogsOf(t, null))}]";
 
-			// 1. Someone at home who remembers writes it down; a household without a Book starts one.
+			// 1. A Write job at the household's carrier: the villager walks there, writes for an
+			// hour, and the carrier's Logs tab says so; a household without a record starts one.
 			int mark = ModsLogLength();
-			Guard("teach the writer", () => { PlusBridge.RememberAtHome(writer, portal); return writer; });
-			yield return StandIn(writer, house, 3, () => PlusBridge.RecordOf(house)?.Contains(portal) == true);
-			Check("a villager at home writes what they remember into a new home Book", () =>
-				(PlusBridge.RecordOf(house)?.Contains(portal) == true && PlusBridge.BooksOf(house).Count == 1
+			TileObject carrier = Guard("teach the writer and find the household's carrier", () => { PlusBridge.RememberAtHome(writer, portal); return PlusBridge.CarrierFor(house, true); });
+			bool sawWriting = false;
+			if (carrier != null)
+			{
+				Log($"  household carrier: {carrier.name} ({PlusBridge.CarriersOf(house).Count} in {house.name})");
+				Guard("give the writer the Write job", () => { SendInto(writer, house); PlusBridge.PlanRecordAction(writer, true, carrier); return writer; });
+				yield return WaitGameHours(6f, () =>
+				{
+					sawWriting |= writer.currentActionNode?.goapType == writeType;
+					return PlusBridge.RecordOf(house)?.Contains(portal) == true;
+				});
+				yield return WaitGameHours(0.1f, null);
+			}
+			Check("a villager given a Write job walks to the record and writes it down", () =>
+				(PlusBridge.RecordOf(house)?.Contains(portal) == true && sawWriting && LogsOf(carrier, wrote).Count > 0
 					&& ModsLogHasSince(mark, $"A household in {village.name} started keeping a record"),
-				$"record={record(house)} books={PlusBridge.BooksOf(house).Count} writer in {writer.currentStructure?.name ?? "the wild"}"));
-			yield return WaitGameHours(0.2f, null);
+				$"record={record(house)} sawWriting={sawWriting} carrier {describeCarrier(carrier)}; writer {writer.name} in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
 			List<string> panel = PlusBridge.KnowledgePanelLines() ?? new List<string>();
 			Check("the bookmarks panel says where a faction keeps records", () =>
 				(panel.Any(l => l.Contains(faction.name) && l.Contains("(written in ") && l.Contains("home")), string.Join(" / ", panel)));
 
-			// 2. Nobody who remembers is left (dead, moved, forgotten like a forgetful elder), and
-			// only this household keeps a record: someone at home reads it back.
+			// 2. The game saves while a villager is writing: the save completes and the writing
+			// goes on. (Loading that save needs a game restart, which the harness cannot do.)
+			const string savedWriting = "a save made while a villager writes completes, and the writing goes on";
+			Guard("empty the record and send the writer again", () =>
+			{
+				PlusBridge.ForgetRecords(faction);
+				PlusBridge.RememberAtHome(writer, portal);
+				carrier = PlusBridge.CarrierFor(house, true);
+				SendInto(writer, house);
+				PlusBridge.PlanRecordAction(writer, true, carrier);
+				return carrier;
+			});
+			yield return WaitGameHours(4f, () => writer.currentActionNode?.goapType == writeType);
+			if (writer.currentActionNode?.goapType != writeType)
+			{
+				Skip(savedWriting, $"{writer.name} did not start writing within 4 hours (doing {writer.currentActionNode?.goapName ?? "nothing"})");
+			}
+			else
+			{
+				string saved = null;
+				yield return SaveAndRead("ruinarch.plus.records.json", (j, e) => saved = j);
+				yield return WaitGameHours(3f, () => PlusBridge.RecordOf(house)?.Contains(portal) == true);
+				Check(savedWriting, () =>
+					(saved != null && PlusBridge.RecordOf(house)?.Contains(portal) == true, $"saved={saved != null} record={record(house)}"));
+			}
+
+			// 3. Nobody told to: in their free time, a villager at home writes what the
+			// household's record lacks (any household of the village: they all remember now).
+			Guard("empty the records; the village still remembers", () => { PlusBridge.ForgetRecords(faction); PlusBridge.RememberAtHome(writer, portal); return writer; });
+			mark = ModsLogLength();
+			Func<List<LocationStructure>> writtenHomes = () => (village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>())
+				.Where(d => PlusBridge.RecordOf(d)?.Contains(portal) == true).ToList();
+			yield return WaitGameHours(48f, () => writtenHomes().Count > 0);
+			Check("in their free time, a villager at home writes what the household's record lacks", () =>
+				(writtenHomes().Count > 0 && ModsLogHasSince(mark, wrote), $"homes with the record: [{string.Join(", ", writtenHomes().Select(d => d.name))}]"));
+
+			// 4. Nobody who remembers is left (dead, moved, forgotten like a forgetful elder), and
+			// only this household keeps a record: a Read job gives it back.
 			Guard("leave only this household's record, and nobody who remembers", () =>
 			{
 				PlusBridge.ForgetRecords(faction);
@@ -3692,30 +3774,42 @@ namespace RuinarchDebug
 				PlusBridge.ForgetMemory(faction);
 				return house;
 			});
-			mark = ModsLogLength();
-			yield return StandIn(reader, house, 4, () => PlusBridge.Remembers(reader, portal));
-			Check("a household member who does not remember reads it back from the Book", () =>
-				(PlusBridge.Remembers(reader, portal) && ModsLogHasSince(mark, $"read of your {portal.name} at home"),
-				$"remembers={PlusBridge.Remembers(reader, portal)} record={record(house)} reader in {reader.currentStructure?.name ?? "the wild"}"));
+			TileObject readAt = PlusBridge.CarrierFor(house, false);
+			if (readAt != null)
+			{
+				Guard("give the reader the Read job", () => { SendInto(reader, house); PlusBridge.PlanRecordAction(reader, false, readAt); return reader; });
+				yield return WaitGameHours(6f, () => PlusBridge.Remembers(reader, portal));
+				yield return WaitGameHours(0.1f, null);
+			}
+			Check("a household member who does not remember reads it back", () =>
+				(PlusBridge.Remembers(reader, portal) && LogsOf(readAt, read).Count > 0 && LogsOf(reader, read).Count > 0,
+				$"remembers={PlusBridge.Remembers(reader, portal)} record={record(house)} carrier {describeCarrier(readAt)}; reader's lines {LogsOf(reader, read).Count}; reader in {reader.currentStructure?.name ?? "the wild"}"));
 
-			// 3. The Book burns while nobody remembers: its record is gone, nobody learns from it.
-			TileObject book = null;
-			Guard("destroy the Book while nobody remembers", () =>
+			// 5. Every carrier destroyed while nobody remembers: the record is gone, and nobody
+			// learns from it even when they would read.
+			List<TileObject> burned = null;
+			Guard("destroy every carrier while nobody remembers", () =>
 			{
 				PlusBridge.ForgetRecords(faction);
 				PlusBridge.RememberAtHome(writer, portal);
 				PlusBridge.WriteRecord(writer, house);
 				PlusBridge.ForgetMemory(faction);
-				book = PlusBridge.BooksOf(house).FirstOrDefault();
-				book?.AdjustHP(-book.currentHP, ELEMENTAL_TYPE.Normal);
-				return book;
+				burned = PlusBridge.CarriersOf(house);
+				foreach (TileObject t in burned)
+				{
+					t.AdjustHP(-t.currentHP, ELEMENTAL_TYPE.Normal);
+				}
+				return burned;
 			});
-			yield return StandIn(reader, house, 2, () => false);
-			Check("a destroyed Book takes its record with it; nobody reads from it afterwards", () =>
-				(book != null && PlusBridge.RecordOf(house) == null && !PlusBridge.Remembers(reader, portal),
-				$"book on {book?.gridTileLocation?.localPlace.ToString() ?? "nothing"} record={record(house)} reader remembers={PlusBridge.Remembers(reader, portal)}"));
+			PlusBridge.SetConfig("readChance", 100);
+			SendInto(reader, house);
+			yield return WaitGameHours(2.05f, null);
+			PlusBridge.SetConfig("readChance", 0);
+			Check("destroying every carrier takes the record; nobody reads from it afterwards", () =>
+				(burned?.Count > 0 && PlusBridge.RecordOf(house) == null && !PlusBridge.Remembers(reader, portal),
+				$"destroyed {burned?.Count ?? 0}: [{string.Join(", ", (burned ?? new List<TileObject>()).Select(t => $"{t.name} hp={t.currentHP} on {t.gridTileLocation?.localPlace.ToString() ?? "nothing"}"))}] record={record(house)} reader remembers={PlusBridge.Remembers(reader, portal)}"));
 
-			// 4. A Town or City queues a Library and its villagers build it. Capitals are Cities
+			// 6. A Town or City queues a Library and its villagers build it. Capitals are Cities
 			// from the first hour, so theirs may be queued (or built) before this suite starts.
 			const string queuedCheck = "a Town or City queues a Library and its villagers build it";
 			string tier = PlusBridge.Tier(village);
@@ -3741,26 +3835,36 @@ namespace RuinarchDebug
 				}
 			}
 
-			// 5. The Library (built at once if the villagers have not built one) holds Books.
+			// The Library (built at once if the villagers have not built one) has carriers.
 			LocationStructure library = PlusBridge.LibraryFor(village) ?? Guard("build a Library", () => PlusBridge.InstantBuildLibrary(village));
 			if (library == null)
 			{
-				foreach (string name in new[] { "a Library holds Books", "a villager writes in the Library", "a villager with nothing to remember it by goes to the Library and reads it",
-					"records are stored inside the player's save file", "records come back when the save loads", "a destroyed Library is announced and its records are gone" })
+				foreach (string name in new[] { "a Library has Book Shelves or Books", "a villager writes in the Library", "a villager with nothing to remember it by goes to the Library and reads it",
+					"destroying one of several carriers keeps the record", "records are stored inside the player's save file", "records come back when the save loads",
+					"a destroyed Library is announced and its records are gone" })
 				{
 					Skip(name, $"{village.name} has no room for a Library");
 				}
 			}
 			else
 			{
-				yield return WaitGameHours(1.05f, () => PlusBridge.BooksOf(library).Count > 0);
-				Check("a Library holds Books", () => (PlusBridge.BooksOf(library).Count > 0, $"books={PlusBridge.BooksOf(library).Count} (libraryBooks={PlusBridge.Config("libraryBooks")})"));
+				yield return WaitGameHours(1.05f, () => PlusBridge.CarriersOf(library).Count > 0);
+				Check("a Library has Book Shelves or Books", () =>
+					(PlusBridge.CarriersOf(library).Count > 0, $"carriers=[{string.Join(", ", PlusBridge.CarriersOf(library).Select(t => t.name))}] (libraryBooks={PlusBridge.Config("libraryBooks")})"));
 
-				// 6. Writing there, then a free-time visit by someone who does not remember.
-				Guard("teach the writer", () => { PlusBridge.RememberAtHome(writer, portal); return writer; });
-				yield return StandIn(writer, library, 3, () => PlusBridge.RecordOf(library)?.Contains(portal) == true);
+				// 7. A Write job in the Library, then a free-time visit by someone who does not remember.
+				TileObject libCarrier = Guard("send the writer to write in the Library", () =>
+				{
+					PlusBridge.RememberAtHome(writer, portal);
+					TileObject t = PlusBridge.CarrierFor(library, true);
+					PlusBridge.PlanRecordAction(writer, true, t);
+					return t;
+				});
+				yield return WaitGameHours(8f, () => PlusBridge.RecordOf(library)?.Contains(portal) == true);
+				yield return WaitGameHours(0.1f, null);
 				Check("a villager writes in the Library", () =>
-					(PlusBridge.RecordOf(library)?.Contains(portal) == true, $"record={record(library)} writer in {writer.currentStructure?.name ?? "the wild"}"));
+					(PlusBridge.RecordOf(library)?.Contains(portal) == true && LogsOf(libCarrier, wrote).Count > 0,
+					$"record={record(library)} carrier {describeCarrier(libCarrier)}; writer in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
 				Guard("leave only the Library's record, and nobody who remembers", () =>
 				{
 					PlusBridge.ForgetRecords(faction);
@@ -3769,13 +3873,30 @@ namespace RuinarchDebug
 					PlusBridge.ForgetMemory(faction);
 					return library;
 				});
+				PlusBridge.SetConfig("libraryVisitChance", 100);
 				mark = ModsLogLength();
-				string readThere = $"read of your {portal.name} in {village.name}'s Library";
-				yield return WaitGameHours(24f, () => ModsLogHasSince(mark, readThere));
+				yield return WaitGameHours(24f, () => ModsLogHasSince(mark, read));
+				PlusBridge.SetConfig("libraryVisitChance", 0);
 				Check("a villager with nothing to remember it by goes to the Library and reads it", () =>
-					(ModsLogHasSince(mark, readThere), $"record={record(library)}; villagers remembering={village.residents.Count(r => PlusBridge.Remembers(r, portal))}"));
+					(ModsLogHasSince(mark, read) && ModsLogHasSince(mark, $"{village.name}'s Library."),
+					$"record={record(library)}; villagers remembering={village.residents.Count(r => PlusBridge.Remembers(r, portal))}"));
 
-				// 7. Stored in the save, and back after a load.
+				// Losing one of several carriers keeps the record.
+				List<TileObject> kept = PlusBridge.CarriersOf(library);
+				if (kept.Count < 2)
+				{
+					Skip("destroying one of several carriers keeps the record", $"the Library has {kept.Count} carrier(s)");
+				}
+				else
+				{
+					Guard("destroy one of the Library's carriers", () => { kept[0].AdjustHP(-kept[0].currentHP, ELEMENTAL_TYPE.Normal); return kept[0]; });
+					yield return WaitGameHours(1.05f, null);
+					Check("destroying one of several carriers keeps the record", () =>
+						(PlusBridge.RecordOf(library)?.Contains(portal) == true && PlusBridge.CarriersOf(library).Count == kept.Count - 1,
+						$"record={record(library)} carriers {kept.Count} -> {PlusBridge.CarriersOf(library).Count}"));
+				}
+
+				// 8. Stored in the save, and back after a load.
 				string json = null;
 				string entries = null;
 				yield return SaveAndRead("ruinarch.plus.records.json", (j, e) => { json = j; entries = e; });
@@ -3787,15 +3908,15 @@ namespace RuinarchDebug
 					PlusBridge.ForgetRecords(faction);
 					ReplayLoad("ruinarch.plus.records.json", json);
 					Check("records come back when the save loads", () =>
-						(PlusBridge.RecordOf(library)?.Contains(portal) == true && PlusBridge.BooksOf(library).Count > 0,
-						$"record={record(library)} books={PlusBridge.BooksOf(library).Count}"));
+						(PlusBridge.RecordOf(library)?.Contains(portal) == true && PlusBridge.CarriersOf(library).Count > 0,
+						$"record={record(library)} carriers={PlusBridge.CarriersOf(library).Count}"));
 				}
 				else
 				{
 					Skip("records come back when the save loads", "no records in the save");
 				}
 
-				// 8. The Library destroyed: announced, its record gone.
+				// 9. The Library destroyed: announced, its record gone.
 				if (PlusBridge.RecordOf(library)?.Contains(portal) != true)
 				{
 					Guard("write the Library's record again", () => { PlusBridge.RememberAtHome(writer, portal); PlusBridge.WriteRecord(writer, library); return library; });
@@ -3815,25 +3936,66 @@ namespace RuinarchDebug
 			PlusBridge.SetConfig("libraryVisitChance", visitChance);
 		}
 
-		// Up to <paramref name="hours"/> hourly checks with <paramref name="c"/> standing in
-		// <paramref name="holder"/> (villagers wander off between them).
-		private IEnumerator StandIn(Character c, LocationStructure holder, int hours, Func<bool> done)
+		// Which buildings come with Book Shelves (records are kept on them), per faction type,
+		// and whether the Write and Read actions are registered with the game. Run by name.
+		private IEnumerator ShelfProbe()
 		{
-			for (int i = 0; i < hours && !done() && !c.isDead; i++)
+			foreach (bool write in new[] { true, false })
 			{
-				// Sent in on the hour's last tick, so they are still inside when the hourly check
-				// runs on the next one (left for an hour, villagers walk off to work or eat).
-				float deadline = Time.realtimeSinceStartup + 60f;
-				while (GameManager.Instance.Today().tick % GameManager.ticksPerHour != GameManager.ticksPerHour - 1 && Time.realtimeSinceStartup < deadline)
+				INTERACTION_TYPE t = PlusBridge.RecordAction(write);
+				Check($"the {(write ? "Write" : "Read")} action is registered with the game", () =>
 				{
-					yield return null;
-				}
-				LocationGridTile spot = holder.passableTiles.FirstOrDefault(t => t.structure == holder && !t.isOccupied);
-				if (spot != null)
+					bool made = InteractionManager.Instance.goapActionData.TryGetValue(t, out GoapAction action);
+					bool states = GoapActionStateDB.goapActionStates.TryGetValue(t, out StateNameAndDuration[] s);
+					return (t != INTERACTION_TYPE.NONE && made && states && action.goapType == t,
+						$"type={(int)t} action={(made ? action.goapName : "missing")} states=[{(states ? string.Join(", ", s.Select(x => $"{x.name} {x.duration} ticks {x.status}")) : "missing")}]");
+				});
+			}
+			Dictionary<string, int[]> tally = new Dictionary<string, int[]>();
+			foreach (NPCSettlement v in Villages())
+			{
+				foreach (KeyValuePair<STRUCTURE_TYPE, List<LocationStructure>> kv in v.structures)
 				{
-					Try($"send {c.name} to {holder.name}", () => CharacterManager.Instance.Teleport(c, spot));
+					foreach (LocationStructure s in kv.Value.Where(s => !s.hasBeenDestroyed))
+					{
+						string key = $"{v.owner?.factionType?.type.ToString() ?? "no faction"} / {kv.Key}";
+						if (!tally.TryGetValue(key, out int[] n))
+						{
+							tally[key] = n = new int[3];
+						}
+						List<TileObject> shelves = s.GetTileObjectsOfType(TILE_OBJECT_TYPE.SHELF_BOOKS) ?? new List<TileObject>();
+						n[0]++;
+						n[1] += shelves.Any(t => t.mapObjectState == MAP_OBJECT_STATE.BUILT) ? 1 : 0;
+						n[2] += shelves.Count(t => t.mapObjectState == MAP_OBJECT_STATE.BUILT);
+					}
 				}
-				yield return WaitGameHours(0.3f, done);
+			}
+			foreach (KeyValuePair<string, int[]> kv in tally.OrderBy(kv => kv.Key))
+			{
+				Log($"  shelves: {kv.Key}: {kv.Value[1]} of {kv.Value[0]} have Book Shelves ({kv.Value[2]} built shelves in all)");
+			}
+			yield break;
+		}
+
+		// The game's log database lines that involve <paramref name="poi"/> and contain
+		// <paramref name="text"/> (any, when null): what its Logs tab lists with every filter on.
+		private static List<string> LogsOf(IPointOfInterest poi, string text)
+		{
+			if (poi == null)
+			{
+				return new List<string>();
+			}
+			List<global::Log> logs = DatabaseManager.Instance.mainSQLDatabase.GetLogsThatMatchCriteria(poi.persistentID, text, UtilityScripts.CollectionUtilities.GetEnumValues<LOG_TAG>().ToList(), 20);
+			return logs?.Select(l => l.logText).ToList() ?? new List<string>();
+		}
+
+		// Put <paramref name="c"/> on a free tile inside <paramref name="holder"/>.
+		private void SendInto(Character c, LocationStructure holder)
+		{
+			LocationGridTile spot = holder.passableTiles.FirstOrDefault(t => t.structure == holder && !t.isOccupied);
+			if (spot != null)
+			{
+				Try($"send {c.name} to {holder.name}", () => CharacterManager.Instance.Teleport(c, spot));
 			}
 		}
 

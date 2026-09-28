@@ -189,12 +189,13 @@ is gone, forgetting sticks.
 **Logs.**
 - Each finished action makes one log with the villager and the carrier as fillers, so it
   shows in the carrier's Logs tab, the villager's logs and the event log: "Jamie wrote of
-  your Portal and Corrupt Kennel in the Book Shelf." / "Kate read of your Portal in the
-  Book Shelf." (Library: "... in the Book Shelf of Andorlad's Library.")
+  your Portal and Corrupt Kennel in a book on the Book Shelf at home." / "Kate read of your
+  Portal in the Book at home." (Library: "... in a book on the Book Shelf of Andorlad's
+  Library.")
 - "A household in Andorlad started keeping a record of your buildings.": the first entry
   of a new home record.
 - "Andorlad's Library was destroyed; its records of your Portal and Corrupt Kennel are
-  lost." / "Andorlad's Library has lost its last Book; its records of ... are lost.": the
+  lost." / "Andorlad's Library has lost the last of its books; its records of ... are lost.": the
   Library's record lost (a notification). Home records lost with their houses are not
   announced.
 
@@ -253,19 +254,22 @@ need not wait for free time; one waits for a natural free-time Write.
 1. A Write job on a carrier: the villager walks to it and performs it to the end; the
    record names the building; the carrier's Logs tab has the line (and the event log says
    the household started a record). The panel's faction line says where records are kept.
-2. A Write in progress survives a save and load and finishes.
+2. The game saves while a villager is writing: the save completes and the writing finishes.
+   Loading a save with a Write in progress needs a game restart, which the harness cannot
+   do; that is checked by hand.
 3. In their free time, a villager at home who remembers something unwritten writes it
    without being told to.
 4. With nobody left who remembers (dead, moved away, or forgotten like a forgetful elder),
    a member of the household reads it back; their log and the carrier's have the line.
-5. Destroying one of two carriers keeps the record; destroying all of them while nobody
-   remembers takes the record; nobody learns from it.
+5. Destroying every carrier of a home record while nobody remembers takes the record;
+   nobody learns from it. Destroying one of several carriers (the Library's) keeps it.
 6. A Town or City queues a Library blueprint and its villagers place and build it within
    two days (capitals are Cities from the first hour, so this may happen before the suite
    starts; skipped with no room for a Workshop-sized building). The Library has carriers.
 7. A villager writes in the Library; with only the Library's record left and nobody who
    remembers, a villager goes there and reads it.
-8. Under curfew a villager still writes at home; nobody goes to the Library.
+8. Under curfew, villagers kept home still write there (in `CurfewSuite`, which puts a
+   village under curfew; the Library is not checked there).
 9. Records survive a save and load (`SaveAndRead`, `ReplayLoad`).
 10. A destroyed Library is announced and its record is gone.
 

@@ -131,13 +131,13 @@ namespace RuinarchPlus
 		// never replaces (trolls, orcs, goblins, kobolds, centaurs, mothmen, wurms, unicorns,
 		// scorpions) have young now and then, up to the size their group had.
 		public bool creatureLifeEnabled = true;
-		// Records (with knowledgeEnabled): households write what they remember of the player's
-		// buildings into a Book at home; a Town or City builds a Library (with
-		// settlementTiersEnabled) holding libraryBooks Books, where any villager writes and
-		// reads. Beside a record, a villager who does not remember one of its buildings reads
-		// it, readChance percent per hour; in free time a villager who does not remember
-		// something the Library holds goes to read, libraryVisitChance percent per hour.
-		// Burning the Books loses the records.
+		// Records (with knowledgeEnabled): households keep a record of the player's buildings
+		// on their dwelling's Book Shelf (or a Book the mod places); a Town or City builds a
+		// Library (with settlementTiersEnabled) whose Book Shelves, or libraryBooks Books, keep
+		// the village's. In free time a villager at home writes what the record lacks (an hour
+		// at the shelf) and, readChance percent per hour, reads what they do not remember;
+		// libraryVisitChance percent per free-time hour they go to write or read in the
+		// Library. Burning the shelves and Books loses the records.
 		public bool recordsEnabled = true;
 		public int readChance = 25;
 		public int libraryVisitChance = 10;

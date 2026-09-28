@@ -17,18 +17,21 @@ namespace RuinarchPlus.Phase4
 	/// Records (config: <c>recordsEnabled</c>, with <c>knowledgeEnabled</c>).
 	///
 	/// Knowledge of the player's buildings lives in people (Phase3/Knowledge.cs) and now also in
-	/// records: Books (the game's own BOOK object) in dwellings and in a village's Library.
-	/// - A villager standing in their own dwelling writes into the household's Book every
-	///   building they remember and have told at home; a household without a Book starts one.
+	/// records, kept in dwellings and in a village's Library. A record is carried by the
+	/// building's Book Shelves, or by Books the mod places when it has none.
+	/// - In their free time, a villager at home who remembers a building the household's
+	///   record does not name walks to a carrier and writes it (the Write action, an hour); a
+	///   household with no carrier yet gets a Book.
+	/// - At home, a villager who does not remember something the record names may read it
+	///   (<c>readChance</c> % a free-time hour; the Read action, an hour).
 	/// - A Town or City (Phase5/SettlementTiers.cs) builds a Library, borrowing the Workshop's
-	///   prefab, and the mod puts <c>libraryBooks</c> Books in it. Any villager of the village
-	///   writes and reads there; in their free time a villager who does not remember something
-	///   the Library holds may go and read (<c>libraryVisitChance</c> % an hour).
-	/// - Beside a record, a villager who does not remember one of its buildings reads it
-	///   (<c>readChance</c> % an hour per entry) and remembers it again. Records never count by
-	///   themselves: only a reader turns them back into knowledge.
-	/// - A burned or broken Book takes its entries with it; a Library losing its last Book, or
-	///   destroyed, is announced. A record is only ever rewritten from living memory.
+	///   prefab; its Book Shelves carry its record, or <c>libraryBooks</c> Books the mod puts in.
+	///   A villager with something to write there or to learn from it goes to write or read
+	///   (<c>libraryVisitChance</c> % a free-time hour), never under curfew.
+	/// - Each finished action is logged on the carrier and the villager (RecordActions.cs).
+	///   Records never count by themselves: only a reader turns them back into knowledge.
+	/// - A record whose carriers are all burned or broken is lost; a Library's loss is
+	///   announced. A record is only ever rewritten from living memory.
 	/// Records are stored inside the player's save (<c>ModData/ruinarch.plus.records.json</c>).
 	/// </summary>
 	internal static class Records
@@ -39,7 +42,7 @@ namespace RuinarchPlus.Phase4
 		private sealed class Record
 		{
 			internal LocationStructure Holder;
-			internal readonly List<TileObject> Books = new List<TileObject>();
+			internal readonly List<TileObject> Carriers = new List<TileObject>();
 			internal readonly HashSet<LocationStructure> Entries = new HashSet<LocationStructure>();
 			internal bool IsLibrary => Holder is Library;
 		}
@@ -48,8 +51,8 @@ namespace RuinarchPlus.Phase4
 
 		private static readonly Dictionary<LocationStructure, Record> ByHolder = new Dictionary<LocationStructure, Record>();
 
-		// The game hour each villager last rolled for a Library visit.
-		private static readonly Dictionary<Character, long> VisitRolled = new Dictionary<Character, long>();
+		// The game hour each villager last decided whether to write or read.
+		private static readonly Dictionary<Character, long> Decided = new Dictionary<Character, long>();
 
 		internal static bool Enabled => Knowledge.Enabled && RuinarchPlusConfig.Current.recordsEnabled;
 
@@ -73,11 +76,12 @@ namespace RuinarchPlus.Phase4
 					IsVillageStructure = true
 				});
 				LibraryBuilding = ModBuildings.Add(LibraryId, "Library", STRUCTURE_TYPE.WORKSHOP);
+				RecordActions.Register();
 				ModSave.Register(SaveId, Save, Load);
 			}
 			catch (Exception e)
 			{
-				RuinarchPlus.Log?.Error("Library registration failed: " + e);
+				RuinarchPlus.Log?.Error("Records registration failed: " + e);
 			}
 		}
 
@@ -90,10 +94,11 @@ namespace RuinarchPlus.Phase4
 			return holder != null && ByHolder.TryGetValue(holder, out Record r) ? new HashSet<LocationStructure>(r.Entries) : null;
 		}
 
-		/// <summary>The standing Books of the record in <paramref name="holder"/>.</summary>
-		internal static List<TileObject> BooksOf(LocationStructure holder)
+		/// <summary>The standing carriers (Book Shelves or Books) of the record in
+		/// <paramref name="holder"/>.</summary>
+		internal static List<TileObject> CarriersOf(LocationStructure holder)
 		{
-			return holder != null && ByHolder.TryGetValue(holder, out Record r) ? r.Books.Where(b => Stands(b, holder)).ToList() : new List<TileObject>();
+			return holder != null && ByHolder.TryGetValue(holder, out Record r) ? r.Carriers.Where(t => Stands(t, holder)).ToList() : new List<TileObject>();
 		}
 
 		/// <summary>Homes of <paramref name="faction"/> whose records name something, and the
@@ -123,41 +128,65 @@ namespace RuinarchPlus.Phase4
 			}
 		}
 
-		private static bool Stands(TileObject book, LocationStructure holder)
+		private static bool Stands(TileObject t, LocationStructure holder)
 		{
-			return book != null && book.gridTileLocation != null && book.gridTileLocation.structure == holder;
+			return t != null && t.gridTileLocation != null && t.gridTileLocation.structure == holder && t.mapObjectState == MAP_OBJECT_STATE.BUILT;
+		}
+
+		/// <summary>The dwelling or Library a Book Shelf or Book stands in, or null.</summary>
+		private static LocationStructure HolderOf(TileObject t)
+		{
+			if (t == null || (t.tileObjectType != TILE_OBJECT_TYPE.SHELF_BOOKS && t.tileObjectType != TILE_OBJECT_TYPE.BOOK))
+			{
+				return null;
+			}
+			LocationStructure s = t.gridTileLocation?.structure;
+			return s != null && !s.hasBeenDestroyed && (s is Library || s.structureType == STRUCTURE_TYPE.DWELLING) && Stands(t, s) ? s : null;
+		}
+
+		/// <summary>True if <paramref name="t"/> can carry a record: a built Book Shelf or Book in
+		/// a dwelling or a Library.</summary>
+		internal static bool IsCarrier(TileObject t)
+		{
+			return Enabled && HolderOf(t) != null;
+		}
+
+		// What c remembers (and has told at home) that the record does not name yet.
+		private static List<LocationStructure> Unwritten(Character c, LocationStructure holder)
+		{
+			ByHolder.TryGetValue(holder, out Record r);
+			return Knowledge.NewsOf(c).Where(s => !Knowledge.Carries(c, s) && (r == null || !r.Entries.Contains(s))).ToList();
+		}
+
+		// What the record names that c does not remember; nothing once its carriers are gone.
+		private static List<LocationStructure> Unread(Character c, LocationStructure holder)
+		{
+			if (!ByHolder.TryGetValue(holder, out Record r) || !r.Carriers.Any(t => Stands(t, holder)))
+			{
+				return new List<LocationStructure>();
+			}
+			return r.Entries.Where(s => Knowledge.Standing(s) && !Knowledge.Remembers(c, s)).ToList();
 		}
 
 		// ---- writing and reading -----------------------------------------------------------
 
 		/// <summary><paramref name="c"/> writes into the record in <paramref name="holder"/> every
-		/// standing building they remember and have told at home. A record with no Book left
-		/// gets a new one first (none if there is no free spot inside). True if anything new
-		/// was written.</summary>
+		/// standing building they remember and have told at home. A record with no carrier
+		/// left starts again on the holder's Book Shelves, or a new Book (none if there is no
+		/// free spot inside). True if anything new was written.</summary>
 		internal static bool Write(Character c, LocationStructure holder)
 		{
-			List<LocationStructure> news = Knowledge.NewsOf(c).Where(s => !Knowledge.Carries(c, s)).ToList();
-			ByHolder.TryGetValue(holder, out Record r);
-			if (news.Count == 0 || (r != null && news.All(r.Entries.Contains)))
+			List<LocationStructure> news = Unwritten(c, holder);
+			if (news.Count == 0)
 			{
 				return false;
 			}
+			Record r = Ensure(holder);
 			if (r == null)
 			{
-				r = new Record { Holder = holder };
-			}
-			r.Books.RemoveAll(b => !Stands(b, holder));
-			if (r.Books.Count == 0)
-			{
-				TileObject book = PlaceBook(holder);
-				if (book == null)
-				{
-					return false;
-				}
-				r.Books.Add(book);
+				return false;
 			}
 			bool first = !r.IsLibrary && r.Entries.Count == 0;
-			ByHolder[holder] = r;
 			r.Entries.UnionWith(news);
 			if (first && holder.settlementLocation is NPCSettlement village)
 			{
@@ -166,40 +195,89 @@ namespace RuinarchPlus.Phase4
 			return true;
 		}
 
-		/// <summary><paramref name="c"/>, beside the record in <paramref name="holder"/>, reads what
-		/// they do not remember: each entry at <c>readChance</c> %, every one when
-		/// <paramref name="force"/> (test harness). Returns what they learned.</summary>
-		internal static List<LocationStructure> ReadFrom(Character c, LocationStructure holder, bool force = false)
+		/// <summary><paramref name="c"/> reads the record in <paramref name="holder"/>: they
+		/// remember every building it names. Returns what they learned.</summary>
+		internal static List<LocationStructure> ReadFrom(Character c, LocationStructure holder)
 		{
 			List<LocationStructure> learned = new List<LocationStructure>();
-			if (!ByHolder.TryGetValue(holder, out Record r) || r.Books.All(b => !Stands(b, holder)))
+			foreach (LocationStructure s in Unread(c, holder))
 			{
-				return learned;
-			}
-			int chance = RuinarchPlusConfig.Current.readChance;
-			foreach (LocationStructure s in r.Entries.ToList())
-			{
-				if (!Knowledge.Remembers(c, s) && (force || UnityEngine.Random.Range(0, 100) < chance) && Knowledge.Read(c, s))
+				if (Knowledge.Read(c, s))
 				{
 					learned.Add(s);
-					if (r.IsLibrary && holder.settlementLocation is NPCSettlement village)
-					{
-						Curfew.Note("{0} read of your {1} in {2}'s Library.", c, s, village);
-					}
-					else
-					{
-						Curfew.Note("{0} read of your {1} at home.", c, s);
-					}
 				}
 			}
 			return learned;
 		}
 
-		// ---- books -------------------------------------------------------------------------
+		/// <summary>The Write action finished (RecordActions.cs).</summary>
+		internal static void Wrote(Character c, TileObject carrier)
+		{
+			LocationStructure holder = HolderOf(carrier);
+			if (!Enabled || holder == null)
+			{
+				return;
+			}
+			List<LocationStructure> news = Unwritten(c, holder);
+			if (Write(c, holder))
+			{
+				RuinarchPlus.Log?.Info($"{c.name} wrote of {Your(news)} {Where(carrier, holder, false)}.");
+			}
+		}
+
+		/// <summary>The Read action finished (RecordActions.cs).</summary>
+		internal static void ReadAt(Character c, TileObject carrier)
+		{
+			LocationStructure holder = HolderOf(carrier);
+			if (!Enabled || holder == null)
+			{
+				return;
+			}
+			List<LocationStructure> learned = ReadFrom(c, holder);
+			if (learned.Count > 0)
+			{
+				RuinarchPlus.Log?.Info($"{c.name} read of {Your(learned)} {Where(carrier, holder, false)}.");
+			}
+		}
+
+		/// <summary>The Write action's log, asked for when it starts; null (no log) when there
+		/// is nothing to write.</summary>
+		internal static string DescribeWrite(Character c, TileObject carrier)
+		{
+			LocationStructure holder = HolderOf(carrier);
+			List<LocationStructure> news = holder == null ? null : Unwritten(c, holder);
+			return news == null || news.Count == 0 ? null : $"{c.uiString} wrote of {Your(news)} {Where(carrier, holder, true)}.";
+		}
+
+		/// <summary>The Read action's log; null when there is nothing to learn.</summary>
+		internal static string DescribeRead(Character c, TileObject carrier)
+		{
+			LocationStructure holder = HolderOf(carrier);
+			List<LocationStructure> unread = holder == null ? null : Unread(c, holder);
+			return unread == null || unread.Count == 0 ? null : $"{c.uiString} read of {Your(unread)} {Where(carrier, holder, true)}.";
+		}
+
+		// "in a book on the Book Shelf", "in the Book", "... of Andorlad's Library".
+		private static string Where(TileObject carrier, LocationStructure holder, bool link)
+		{
+			string at = carrier.tileObjectType == TILE_OBJECT_TYPE.SHELF_BOOKS ? "in a book on the " + carrier.name : "in the " + carrier.name;
+			if (holder is Library && holder.settlementLocation is NPCSettlement v)
+			{
+				return $"{at} of {(link ? v.uiString : v.name)}'s Library";
+			}
+			return at + " at home";
+		}
+
+		// ---- carriers ----------------------------------------------------------------------
 
 		// A Book goes on a free walkable tile inside, never one of the last two: villagers
 		// must still be able to walk in (a Workshop-sized Library has only a few).
 		private const int KeepFree = 2;
+
+		private static List<TileObject> ShelvesIn(LocationStructure holder)
+		{
+			return holder.GetTileObjectsOfType(TILE_OBJECT_TYPE.SHELF_BOOKS)?.Where(t => Stands(t, holder)).ToList() ?? new List<TileObject>();
+		}
 
 		private static TileObject PlaceBook(LocationStructure holder)
 		{
@@ -212,7 +290,63 @@ namespace RuinarchPlus.Phase4
 			return holder.AddPOI(book, free[UnityEngine.Random.Range(0, free.Count)]) ? book : null;
 		}
 
-		// A Library seen built for the first time gets its Books.
+		/// <summary>
+		/// Forget carriers that no longer stand. With none left the record is lost: a Library's
+		/// loss is announced and its entries go (the Library stays known, so it is not furnished
+		/// again). True if the record has no carrier.
+		/// </summary>
+		private static bool Bare(Record r)
+		{
+			r.Carriers.RemoveAll(t => !Stands(t, r.Holder));
+			if (r.Carriers.Count > 0)
+			{
+				return false;
+			}
+			if (r.IsLibrary && r.Entries.Count > 0 && r.Holder.settlementLocation is NPCSettlement village)
+			{
+				Curfew.Announce("{0}'s Library has lost the last of its books; its records of " + Your(r.Entries.ToList()) + " are lost.", village);
+			}
+			r.Entries.Clear();
+			return true;
+		}
+
+		/// <summary>The record in <paramref name="holder"/> with at least one carrier: its Book
+		/// Shelves, else a new Book. Null if it has neither and no room for a Book.</summary>
+		private static Record Ensure(LocationStructure holder)
+		{
+			if (!ByHolder.TryGetValue(holder, out Record r))
+			{
+				r = new Record { Holder = holder };
+			}
+			if (Bare(r))
+			{
+				r.Carriers.AddRange(ShelvesIn(holder));
+				if (r.Carriers.Count == 0)
+				{
+					TileObject book = PlaceBook(holder);
+					if (book == null)
+					{
+						return null;
+					}
+					r.Carriers.Add(book);
+				}
+			}
+			ByHolder[holder] = r;
+			return r;
+		}
+
+		/// <summary>A standing carrier of the record in <paramref name="holder"/>, chosen at
+		/// random. With <paramref name="start"/>, a holder without one gets its Book Shelves or a
+		/// new Book first (for writing). Null if there is none.</summary>
+		internal static TileObject CarrierFor(LocationStructure holder, bool start)
+		{
+			Record r = start ? Ensure(holder) : ByHolder.TryGetValue(holder, out Record found) ? found : null;
+			List<TileObject> standing = r?.Carriers.Where(t => Stands(t, r.Holder)).ToList();
+			return standing == null || standing.Count == 0 ? null : standing[UnityEngine.Random.Range(0, standing.Count)];
+		}
+
+		// A Library seen built for the first time gets its carriers: its Book Shelves, or
+		// libraryBooks Books.
 		private static void Furnish(Library library)
 		{
 			if (ByHolder.ContainsKey(library))
@@ -220,17 +354,19 @@ namespace RuinarchPlus.Phase4
 				return;
 			}
 			Record r = new Record { Holder = library };
-			for (int i = 0; i < RuinarchPlusConfig.Current.libraryBooks; i++)
+			r.Carriers.AddRange(ShelvesIn(library));
+			bool shelves = r.Carriers.Count > 0;
+			for (int i = 0; !shelves && i < RuinarchPlusConfig.Current.libraryBooks; i++)
 			{
 				TileObject book = PlaceBook(library);
 				if (book == null)
 				{
 					break;
 				}
-				r.Books.Add(book);
+				r.Carriers.Add(book);
 			}
 			ByHolder[library] = r;
-			RuinarchPlus.Log?.Info($"The Library of {library.settlementLocation?.name ?? "a village"} holds {r.Books.Count} Book(s).");
+			RuinarchPlus.Log?.Info($"The Library of {library.settlementLocation?.name ?? "a village"} holds {r.Carriers.Count} {(shelves ? "Book Shelf(s)" : "Book(s)")}.");
 		}
 
 		// ---- the Library -------------------------------------------------------------------
@@ -245,8 +381,8 @@ namespace RuinarchPlus.Phase4
 				&& !s.HasJob(JOB_TYPE.PLACE_BLUEPRINT);
 		}
 
-		/// <summary>Build a Library instantly (debug menu, test harness), with its Books. Null if
-		/// the village has no room.</summary>
+		/// <summary>Build a Library instantly (debug menu, test harness), with its carriers. Null
+		/// if the village has no room.</summary>
 		internal static LocationStructure InstantBuildLibrary(NPCSettlement settlement)
 		{
 			Library existing = Library.FindFor(settlement);
@@ -263,7 +399,7 @@ namespace RuinarchPlus.Phase4
 		}
 
 		/// <summary>Empty every record kept by <paramref name="faction"/>'s villages (test harness);
-		/// the Books stay, blank, so a Library is not furnished again.</summary>
+		/// the carriers stay, blank, so a Library is not furnished again.</summary>
 		internal static void Forget(Faction faction)
 		{
 			foreach (Record r in ByHolder.Values.Where(r => r.Holder.settlementLocation is NPCSettlement v && v.owner == faction))
@@ -335,29 +471,15 @@ namespace RuinarchPlus.Phase4
 			{
 				Furnish(library);
 			}
-			foreach (Character c in village.residents.ToList())
-			{
-				if (!Knowledge.CanRemember(c) || !Knowledge.Counts(c))
-				{
-					continue;
-				}
-				LocationStructure at = c.currentStructure;
-				bool home = at != null && at == c.homeStructure && at.structureType == STRUCTURE_TYPE.DWELLING && !at.hasBeenDestroyed;
-				if (home || (library != null && at == library))
-				{
-					Write(c, at);
-					ReadFrom(c, at);
-				}
-			}
 		}
 
-		// Books that left their holder, holders destroyed, entries destroyed. A record with no
-		// Book left loses its entries; a Library's loss is announced, a household's is not.
+		// Holders destroyed, entries destroyed, carriers gone. A household whose record lost its
+		// last carrier forgets the record; a Library keeps an empty one (see Bare).
 		private static void Prune()
 		{
-			foreach (Character c in VisitRolled.Keys.Where(c => c == null || c.isDead).ToList())
+			foreach (Character c in Decided.Keys.Where(c => c == null || c.isDead).ToList())
 			{
-				VisitRolled.Remove(c);
+				Decided.Remove(c);
 			}
 			foreach (Record r in ByHolder.Values.ToList())
 			{
@@ -367,66 +489,84 @@ namespace RuinarchPlus.Phase4
 					continue;
 				}
 				r.Entries.RemoveWhere(s => !Knowledge.Standing(s));
-				r.Books.RemoveAll(b => !Stands(b, r.Holder));
-				if (r.Books.Count > 0)
-				{
-					continue;
-				}
-				if (r.IsLibrary)
-				{
-					if (r.Entries.Count > 0 && r.Holder.settlementLocation is NPCSettlement village)
-					{
-						Curfew.Announce("{0}'s Library has lost its last Book; its records of " + Your(r.Entries.ToList()) + " are lost.", village);
-					}
-					// The Library stays known (it is not furnished again); its record is empty
-					// until someone who remembers writes a new Book.
-					r.Entries.Clear();
-				}
-				else
+				if (Bare(r) && !r.IsLibrary)
 				{
 					ByHolder.Remove(r.Holder);
 				}
 			}
 		}
 
-		// ---- visits ------------------------------------------------------------------------
+		// ---- free time ---------------------------------------------------------------------
 
-		/// <summary>In free time, a villager whose village's Library names something they do not
-		/// remember rolls once an hour to go and read. The tile to walk to, or null.</summary>
-		internal static LocationGridTile VisitSpot(Character c)
+		/// <summary>
+		/// Called every tick for every idle villager (Records_FreeTime). In free time, at most
+		/// once a game hour: at home, write what the household's record lacks, else maybe
+		/// (<c>readChance</c>) read what it has that they do not remember; otherwise maybe
+		/// (<c>libraryVisitChance</c>, not under curfew) go to the Library to write or read.
+		/// True with the action and the carrier to do it at.
+		/// </summary>
+		internal static bool JobFor(Character c, out INTERACTION_TYPE action, out TileObject carrier)
 		{
-			// Called every tick for every idle villager: most villages have no Library, so that
-			// is asked first.
-			if (!Enabled || !(c?.homeSettlement is NPCSettlement home))
+			action = INTERACTION_TYPE.NONE;
+			carrier = null;
+			if (!Enabled || !(c?.homeSettlement is NPCSettlement home)
+				|| c.dailyScheduleComponent.schedule.GetScheduleType(GameManager.Instance.currentTick) != DAILY_SCHEDULE.Free_Time)
 			{
-				return null;
-			}
-			Library library = Library.FindFor(home);
-			if (library == null || c.currentStructure == library || !ByHolder.TryGetValue(library, out Record r) || r.Entries.Count == 0
-				|| !Knowledge.CanRemember(c) || !Knowledge.Counts(c) || Curfew.Binds(c)
-				|| c.dailyScheduleComponent.schedule.GetScheduleType(GameManager.Instance.currentTick) != DAILY_SCHEDULE.Free_Time
-				|| !r.Entries.Any(s => !Knowledge.Remembers(c, s)))
-			{
-				return null;
+				return false;
 			}
 			long hour = Hour;
-			if (VisitRolled.TryGetValue(c, out long rolled) && rolled == hour)
+			if (Decided.TryGetValue(c, out long decided) && decided == hour)
 			{
-				return null;
+				return false;
 			}
-			VisitRolled[c] = hour;
-			if (UnityEngine.Random.Range(0, 100) >= RuinarchPlusConfig.Current.libraryVisitChance)
+			Decided[c] = hour;
+			if (!Knowledge.CanRemember(c) || !Knowledge.Counts(c))
 			{
-				return null;
+				return false;
 			}
-			List<LocationGridTile> free = library.passableTiles?.Where(t => t != null && t.structure == library && !t.isOccupied).ToList();
-			return free == null || free.Count == 0 ? null : free[UnityEngine.Random.Range(0, free.Count)];
+			LocationStructure dwelling = c.homeStructure;
+			if (dwelling != null && c.currentStructure == dwelling && dwelling.structureType == STRUCTURE_TYPE.DWELLING && !dwelling.hasBeenDestroyed)
+			{
+				if (Unwritten(c, dwelling).Count > 0)
+				{
+					carrier = CarrierFor(dwelling, start: true);
+					action = RecordActions.Write;
+					return carrier != null;
+				}
+				if (Unread(c, dwelling).Count > 0 && UnityEngine.Random.Range(0, 100) < RuinarchPlusConfig.Current.readChance)
+				{
+					carrier = CarrierFor(dwelling, start: false);
+					action = RecordActions.Read;
+					return carrier != null;
+				}
+			}
+			Library library = Library.FindFor(home);
+			if (library == null || Curfew.Binds(c))
+			{
+				return false;
+			}
+			bool write = Unwritten(c, library).Count > 0;
+			if ((!write && Unread(c, library).Count == 0) || UnityEngine.Random.Range(0, 100) >= RuinarchPlusConfig.Current.libraryVisitChance)
+			{
+				return false;
+			}
+			carrier = CarrierFor(library, start: write);
+			action = write ? RecordActions.Write : RecordActions.Read;
+			return carrier != null;
+		}
+
+		/// <summary>Queue the Write or Read job for <paramref name="c"/> at <paramref name="carrier"/>
+		/// (free time, test harness).</summary>
+		internal static void Plan(Character c, INTERACTION_TYPE action, TileObject carrier)
+		{
+			c.PlanIdle(JOB_TYPE.IDLE, action, carrier);
 		}
 
 		// ---- persistence -------------------------------------------------------------------
-		// One "kind|holderId|bookId,bookId|structureId,structureId" string per record, kind H
-		// (a home) or L (a Library). Strings only (JsonUtility drops lists of mod classes).
-		// Always written: a missing file means a save from before records.
+		// One "kind|holderId|carrierId,carrierId|structureId,structureId" string per record, kind
+		// H (a home) or L (a Library). Carriers are Book Shelves or Books. Strings only
+		// (JsonUtility drops lists of mod classes). Always written: a missing file means a save
+		// from before records.
 
 		private static string Save()
 		{
@@ -437,9 +577,9 @@ namespace RuinarchPlus.Phase4
 				{
 					continue;
 				}
-				string books = string.Join(",", r.Books.Where(b => Stands(b, r.Holder)).Select(b => b.persistentID));
+				string carriers = string.Join(",", r.Carriers.Where(t => Stands(t, r.Holder)).Select(t => t.persistentID));
 				string entries = string.Join(",", r.Entries.Where(Knowledge.Standing).Select(s => s.persistentID));
-				file.records.Add($"{(r.IsLibrary ? "L" : "H")}|{r.Holder.persistentID}|{books}|{entries}");
+				file.records.Add($"{(r.IsLibrary ? "L" : "H")}|{r.Holder.persistentID}|{carriers}|{entries}");
 			}
 			return JsonUtility.ToJson(file);
 		}
@@ -447,7 +587,7 @@ namespace RuinarchPlus.Phase4
 		private static void Load(string json)
 		{
 			ByHolder.Clear();
-			VisitRolled.Clear();
+			Decided.Clear();
 			if (string.IsNullOrEmpty(json))
 			{
 				return;
@@ -465,10 +605,10 @@ namespace RuinarchPlus.Phase4
 				Record r = new Record { Holder = holder };
 				foreach (string id in parts[2].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
 				{
-					TileObject book = DatabaseManager.Instance.tileObjectDatabase.GetTileObjectByPersistentIDSafe(id);
-					if (Stands(book, holder))
+					TileObject carrier = DatabaseManager.Instance.tileObjectDatabase.GetTileObjectByPersistentIDSafe(id);
+					if (Stands(carrier, holder))
 					{
-						r.Books.Add(book);
+						r.Carriers.Add(carrier);
 					}
 				}
 				foreach (string id in parts[3].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
@@ -479,11 +619,11 @@ namespace RuinarchPlus.Phase4
 						r.Entries.Add(s);
 					}
 				}
-				if (r.Books.Count == 0 && !r.IsLibrary)
+				if (r.Carriers.Count == 0 && !r.IsLibrary)
 				{
 					continue;
 				}
-				if (r.Books.Count == 0)
+				if (r.Carriers.Count == 0)
 				{
 					r.Entries.Clear();
 				}
@@ -500,24 +640,25 @@ namespace RuinarchPlus.Phase4
 		public List<string> records = new List<string>();
 	}
 
-	// Free time: a villager may go to the Library to read what they do not remember. Only
-	// runs while the villager is idle (the game plans behaviour only then), so needs, work and
-	// combat come first.
+	// Free time: write or read at home, or go to the Library to. Only runs while the villager
+	// is idle (the game plans behaviour only then), so needs, work and combat come first. Runs
+	// before the curfew's prefix (which keeps villagers in) so a villager kept home still
+	// writes and reads there; the Library is never chosen under curfew.
 	[HarmonyPatch(typeof(BehaviourComponent), nameof(BehaviourComponent.RunBehaviour))]
-	internal static class Records_LibraryVisit
+	[HarmonyPriority(Priority.High)]
+	internal static class Records_FreeTime
 	{
 		private static bool Prefix(BehaviourComponent __instance, ref string __result)
 		{
 			try
 			{
 				Character c = __instance.owner;
-				LocationGridTile spot = Records.VisitSpot(c);
-				if (spot == null || !c.jobComponent.CreateGoToJob(JOB_TYPE.VISIT_STRUCTURE, spot, out JobQueueItem job) || job == null)
+				if (!Records.JobFor(c, out INTERACTION_TYPE action, out TileObject carrier))
 				{
 					return true;
 				}
-				c.jobQueue.AddJobInQueue(job);
-				__result = "Going to read in the Library.";
+				Records.Plan(c, action, carrier);
+				__result = action == RecordActions.Write ? "Going to write." : "Going to read.";
 				return false;
 			}
 			catch

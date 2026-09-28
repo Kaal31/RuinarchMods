@@ -337,8 +337,22 @@ namespace RuinarchDebug
 		internal static HashSet<LocationStructure> RecordOf(LocationStructure holder) =>
 			RecordsType?.GetMethod("RecordOf", Any)?.Invoke(null, new object[] { holder }) as HashSet<LocationStructure>;
 
-		internal static List<TileObject> BooksOf(LocationStructure holder) =>
-			RecordsType?.GetMethod("BooksOf", Any)?.Invoke(null, new object[] { holder }) as List<TileObject> ?? new List<TileObject>();
+		/// <summary>The standing Book Shelves or Books that carry the record in a holder.</summary>
+		internal static List<TileObject> CarriersOf(LocationStructure holder) =>
+			RecordsType?.GetMethod("CarriersOf", Any)?.Invoke(null, new object[] { holder }) as List<TileObject> ?? new List<TileObject>();
+
+		/// <summary>A carrier of the record in <paramref name="holder"/>; with <paramref name="start"/>
+		/// a holder without one gets its Book Shelves or a new Book first.</summary>
+		internal static TileObject CarrierFor(LocationStructure holder, bool start) =>
+			RecordsType?.GetMethod("CarrierFor", Any)?.Invoke(null, new object[] { holder, start }) as TileObject;
+
+		/// <summary>The Write or Read action type Ruinarch+ registered (NONE if missing).</summary>
+		internal static INTERACTION_TYPE RecordAction(bool write) =>
+			Plus?.GetType("RuinarchPlus.Phase4.RecordActions")?.GetProperty(write ? "Write" : "Read", Any)?.GetValue(null) is INTERACTION_TYPE t ? t : INTERACTION_TYPE.NONE;
+
+		/// <summary>Give <paramref name="c"/> the Write or Read job at <paramref name="carrier"/>.</summary>
+		internal static void PlanRecordAction(Character c, bool write, TileObject carrier) =>
+			RecordsType?.GetMethod("Plan", Any)?.Invoke(null, new object[] { c, RecordAction(write), carrier });
 
 		internal static LocationStructure LibraryFor(BaseSettlement settlement) =>
 			Plus?.GetType("Inner_Maps.Location_Structures.Library")?.GetMethod("FindFor", Any)?.Invoke(null, new object[] { settlement }) as LocationStructure;
