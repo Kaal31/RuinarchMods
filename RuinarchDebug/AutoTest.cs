@@ -4389,6 +4389,13 @@ namespace RuinarchDebug
 			// anyone missed the victim: they were never missing, so the record goes quietly, with
 			// no "found dead".
 			bool neverMissed = !ModsLogHas($"{victim.name} of {village.name} has gone missing") && PlusBridge.MissingState(victim) == null;
+			// A body taken off the map before any search got there (eaten, butchered, rotted
+			// away: the wild is full of monsters) cannot be found; the victim stays missing.
+			// Only when every search ended with the body already gone; a search that ended
+			// with the body still lying there is a real failure.
+			string modsText = File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log"));
+			List<string> searchEnds = modsText.Split('\n').Where(l => l.Contains($"Search for {victim.name} ended")).ToList();
+			bool bodyGone = !victim.hasMarker && searchEnds.Count > 0 && searchEnds.All(l => l.TrimEnd().EndsWith("target dead, off map."));
 			if (starved != null && PlusBridge.MissingState(victim) != null)
 			{
 				Skip("a resident killed out of sight is found dead", starved);
@@ -4396,6 +4403,10 @@ namespace RuinarchDebug
 			else if (neverMissed)
 			{
 				Skip("a resident killed out of sight is found dead", $"{victim.name}'s body was come across before anyone missed them (grave={(victim.grave != null ? "yes" : "no")})");
+			}
+			else if (bodyGone && PlusBridge.MissingState(victim) != null)
+			{
+				Skip("a resident killed out of sight is found dead", $"{victim.name}'s body left the map before any of {searchEnds.Count} search(es) got there (state={PlusBridge.MissingState(victim)})");
 			}
 			else Check("a resident killed out of sight is found dead", () =>
 			{

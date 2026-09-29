@@ -81,11 +81,14 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
 
 - [x] `run-autotest.sh 1200 ShelfProbe` (after the `GoapActionStateDB` fix): both actions
   registered with their states; spec updated with the shelf findings.
-- [ ] `run-autotest.sh 1500 RecordsSuite` twice, then two full regressions. Runs 1-2 (before
+- [x] `run-autotest.sh 1500 RecordsSuite` twice, then two full regressions. Runs 1-2 (before
   the thought bubble fix): writing, reading, free-time writing, carriers, Library reading
   and saves passed. Harness-given jobs were IDLE (priority 250) and waited behind work;
-  the bridge now gives them as VISIT_STRUCTURE (1000).
-- [ ] Commit and push both repos after each green step.
+  the bridge now gives them as VISIT_STRUCTURE (1000), after clearing whatever job holds
+  the villager. Final: ExplosionTest + RecordsSuite 21/0/0; full run 39 130/1/14 (a
+  missing-persons victim's body left the map before any search: harness now skips that),
+  full run 40 141/0/9; no game exceptions, the Portal at full HP.
+- [x] Commit and push both repos after each green step.
 
 ### Task 8: releases
 
