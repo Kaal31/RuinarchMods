@@ -56,6 +56,15 @@ On duty:
   (`behaviourComponent.AddBehaviourComponent`); outside those hours, or released, it is
   removed (the behaviour restores their combat mode).
 - The game's combat does the rest: an aggressive patroller attacks hostiles in sight.
+- Rank (found in the first harness runs): the behaviour's 200 is below visiting and
+  socializing (800), so an idle guard wandered off to another village; and a queued job runs
+  only when it ranks at least as high as the villager's highest behaviour
+  (`Character.HasSameOrHigherPriorityJobThanBehaviour`), so raising the behaviour alone left
+  its PATROL jobs (450) piling up unrun. The watch sets the shared behaviour instance's
+  priority to 850 (above visits, below putting out fires at 950) and gives each PATROL job it
+  produces the same 850 (a postfix on `NightPatrolBehaviour.TryDoBehaviour`). The game never
+  uses this behaviour, so nothing else changes. On duty a guard patrols ahead of ordinary
+  meals and sleep; urgent hunger (1000) still comes first.
 
 Announcements (event log): "{settlement} has set a night watch: {guards}." when a watch is
 first set; nothing for replacements (`mods.log` only).

@@ -61,9 +61,34 @@ namespace RuinarchPlus.Phase6
 			return c != null && !c.isDead && c.isNormalCharacter && c.faction == s.owner && c.characterClass != null && c.characterClass.IsCombatant();
 		}
 
+		// The game's night patrol ranks below visiting and socializing (200 against 800), so
+		// an idle guard would wander off. The game never uses the behaviour itself, and its one
+		// instance is shared (CharacterManager.GetCharacterBehaviourComponent): ranked above
+		// visits, below putting out fires (950) and berserk fits (1085). Its PATROL jobs get the
+		// same rank (the patch below): a queued job only runs when it ranks at least as high as
+		// the villager's highest behaviour (Character.HasSameOrHigherPriorityJobThanBehaviour),
+		// so at the job's own 450 the jobs would pile up unrun.
+		internal const int PatrolPriority = 850;
+		private static bool _ranked;
+
+		private static void RankPatrol()
+		{
+			if (_ranked || CharacterManager.Instance == null)
+			{
+				return;
+			}
+			CharacterBehaviour patrol = CharacterManager.Instance.GetCharacterBehaviourComponent(typeof(NightPatrolBehaviour));
+			if (patrol != null)
+			{
+				AccessTools.Property(typeof(CharacterBehaviour), nameof(CharacterBehaviour.priority)).SetValue(patrol, PatrolPriority);
+				_ranked = true;
+			}
+		}
+
 		/// <summary>Hourly: name, replace and release guards; put those on duty at night on patrol.</summary>
 		internal static void Check()
 		{
+			RankPatrol();
 			List<BaseSettlement> settlements = GridMap.Instance?.mainRegion?.settlementsInRegion;
 			if (settlements == null)
 			{
@@ -263,6 +288,16 @@ namespace RuinarchPlus.Phase6
 			{
 				RuinarchPlus.Log?.Warning("Night watch hourly failed: " + e.Message);
 			}
+		}
+	}
+
+	// The night patrol's PATROL job ranks with the behaviour (see NightWatch.PatrolPriority).
+	[HarmonyPatch(typeof(NightPatrolBehaviour), nameof(NightPatrolBehaviour.TryDoBehaviour))]
+	internal static class NightWatch_PatrolJobRank
+	{
+		private static void Postfix(JobQueueItem producedJob)
+		{
+			producedJob?.SetPriority(NightWatch.PatrolPriority);
 		}
 	}
 

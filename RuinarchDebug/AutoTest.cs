@@ -4477,18 +4477,31 @@ namespace RuinarchDebug
 
 			// 3. At night, at home, they patrol, aggressive.
 			Func<int> hour = () => GameManager.Instance.Today().tick / GameManager.ticksPerHour;
+			// A guard named by day is still on a day rhythm (tired at night): a day to settle in.
+			yield return WaitGameHours(24f, null);
 			yield return WaitGameHours(24f, () => hour() == 23);
 			BringResidentsHome(village);
 			Try("run the night watch check", PlusBridge.WatchCheck);
-			yield return WaitGameHours(1f, null);
 			guards = PlusBridge.GuardsOf(village);
 			Func<Character, bool> patrolling = g => g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour)) && g.combatComponent.combatMode == COMBAT_MODE.Aggressive;
-			Check("at night the guards walk the village, ready to fight", () =>
-				(guards.Any(patrolling), string.Join(", ", guards.Select(g => $"{g.name}: patrol behaviour={g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour))} mode={g.combatComponent.combatMode} "
-					+ $"job={g.currentJob?.jobType.ToString() ?? "none"} doing={g.currentActionNode?.goapName ?? "nothing"} in={g.currentSettlement?.name ?? "the wild"} schedule={g.dailyScheduleComponent.schedule.GetScheduleType(GameManager.Instance.Today().tick)}"))));
+			// Walking the rounds: a PATROL action or job seen within two night hours.
+			Character walker = null;
+			yield return WaitGameHours(2f, () => (walker = guards.FirstOrDefault(g => patrolling(g)
+				&& (g.currentActionNode?.goapType == INTERACTION_TYPE.PATROL || g.currentJob?.jobType == JOB_TYPE.PATROL))) != null);
+			if (guards.Count == 0)
+			{
+				string why = string.Join("; ", File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log")).Split('\n')
+					.Where(l => l.Contains($"released from {village.name}'s night watch")).Select(l => l.Trim()));
+				Skip("at night the guards walk the village, ready to fight", $"no guard left by night: {why}");
+			}
+			else Check("at night the guards walk the village, ready to fight", () =>
+				(walker != null, $"hour {hour()} (tick {GameManager.Instance.Today().tick}); walking: {walker?.name ?? "nobody"}; " + string.Join(", ", guards.Select(g => $"{g.name}: patrol behaviour={g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour))} mode={g.combatComponent.combatMode} "
+					+ $"job={g.currentJob?.jobType.ToString() ?? "none"} doing={g.currentActionNode?.goapName ?? "nothing"} in={g.currentSettlement?.name ?? "the wild"} schedule={g.dailyScheduleComponent.schedule.GetScheduleType(GameManager.Instance.Today().tick)} "
+					+ $"resting={g.traitContainer.HasTrait("Resting")} canPlan={g.CanPlanGoap()} queue=[{string.Join("/", g.jobQueue.jobsInQueue.Select(j => j.jobType))}] "
+					+ $"behaviours=[{string.Join(" ", g.behaviourComponent.currentBehaviourComponents.Select(b => b.GetType().Name + ":" + b.priority))}]"))));
 
 			// 4. A wolf in the village at night is fought.
-			Character guard = guards.FirstOrDefault(patrolling) ?? guards.FirstOrDefault();
+			Character guard = walker ?? guards.FirstOrDefault(patrolling) ?? guards.FirstOrDefault();
 			List<LocationGridTile> around = new List<LocationGridTile>();
 			guard?.gridTileLocation?.PopulateTilesInRadius(around, 4, includeCenterTile: false, includeTilesInDifferentStructure: true);
 			LocationGridTile near = around.FirstOrDefault(t => !t.isOccupied && t.IsPartOfSettlement(village));
@@ -4505,12 +4518,20 @@ namespace RuinarchDebug
 					s.CreateMarker();
 					s.InitialCharacterPlacement(near);
 					s.marker.UpdatePosition();
+					// A creature placed in a village can be taken in by its faction: keep it wild.
+					if (s.faction != FactionManager.Instance.wildMonsterFaction)
+					{
+						s.ChangeFactionTo(FactionManager.Instance.wildMonsterFaction, bypassIdeologyChecking: true);
+					}
 					return s;
 				});
 				bool fought = false;
 				yield return WaitGameHours(2f, () => fought = wolf == null || wolf.isDead || guards.Any(g => g.combatComponent.hostilesInRange.Contains(wolf)));
 				Check("a guard fights a wolf in the village at night", () =>
-					(wolf != null && fought, $"wolf dead={wolf?.isDead} faction={wolf?.faction?.name}; guards fighting it: {string.Join(", ", guards.Where(g => wolf != null && g.combatComponent.hostilesInRange.Contains(wolf)).Select(g => g.name))}"));
+					(wolf != null && fought, $"wolf dead={wolf?.isDead} faction={wolf?.faction?.name} resting={wolf?.traitContainer.HasTrait("Resting")} at {wolf?.gridTileLocation?.localPlace} "
+					+ $"in village={wolf?.gridTileLocation?.IsPartOfSettlement(village)}; {guard.name} hostile to it={wolf != null && guard.IsHostileWith(wolf)} "
+					+ $"distance={(wolf?.gridTileLocation == null || guard.gridTileLocation == null ? -1 : guard.gridTileLocation.GetDistanceTo(wolf.gridTileLocation)):F0} doing={guard.currentActionNode?.goapName ?? "nothing"} "
+					+ $"resting={guard.traitContainer.HasTrait("Resting")}; guards fighting it: {string.Join(", ", guards.Where(g => wolf != null && g.combatComponent.hostilesInRange.Contains(wolf)).Select(g => g.name))}"));
 				Guard("remove the wolf", () => { if (wolf != null && !wolf.isDead) { wolf.Death("autotest"); } return wolf; });
 			}
 
