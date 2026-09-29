@@ -66,7 +66,7 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
 ### Task 5: config, README, design doc
 
 - [x] `Config.cs` comment; README records and config rows; design doc Phase 4 item.
-- [ ] At release: the notes say Ruinarch+ 0.9.0 needs RuinarchModLoader v0.5.0 (`mod.json`
+- [x] At release: the notes say Ruinarch+ 0.9.0 needs RuinarchModLoader v0.5.0 (`mod.json`
   has no requirement field).
 
 ### Task 6: harness
@@ -92,5 +92,5 @@ Decompiled reference: RuinarchRE (read only). Build: `RuinarchModLoader/tools/bu
 
 ### Task 8: releases
 
-- [ ] RuinarchModLoader v0.5.0 (package-release includes `Ruinarch.ModContent.dll`).
-- [ ] Ruinarch+ 0.9.0 with records, notes say it needs loader v0.5.0.
+- [x] RuinarchModLoader v0.5.0 (package-release includes `Ruinarch.ModContent.dll`).
+- [x] Ruinarch+ 0.9.0 with records, notes say it needs loader v0.5.0.
