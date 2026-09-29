@@ -18,6 +18,8 @@ namespace RuinarchPlus.Phase5
 		internal List<Character> Rebels;
 		internal List<Character> Loyal;
 		internal int Hours;
+		// Assassination: the hour the plotter struck (the ruler asleep), or -1 while waiting.
+		internal int StruckAt = -1;
 		internal UprisingKind Kind;
 	}
 
@@ -29,10 +31,12 @@ namespace RuinarchPlus.Phase5
 	/// prison; the ruler wanted by their own faction x3) or a civil war (15 with 12+ adults and
 	/// 4+ on each side; 20+ villagers x2).
 	/// - Brawl: the game's knockout fights; the ruler down, the leader takes the rule.
-	/// - Assassination: only the leader acts, with the game's own assassination job. The
+	/// - Assassination: only the leader acts. They wait (up to 48 hours) until the ruler is
+	///   asleep, stay up (woken if they sleep too) and strike with the game's own
+	///   assassination job (an open, lethal fight: awake, rulers beat most plotters). The
 	///   ruler killed by them: unseen, the leader takes the rule; seen (a Murder on record),
-	///   the leader is a criminal and the game's own succession stands. 24 hours, or the
-	///   leader stopped: the plot fails.
+	///   the leader is a criminal and the game's own succession stands. The plotter killed,
+	///   beaten or caught, or a day after striking: the plot fails.
 	/// - Jailing: a brawl, then the rebels take the old ruler to the prison (Restrained, the
 	///   game's carry and drop). The mod holds them: villagers leave them tied (friends may
 	///   free them), and after 48 hours in the prison whoever rules decides by what they think
@@ -48,6 +52,7 @@ namespace RuinarchPlus.Phase5
 		private const int LongHours = 24;
 		private const int HeldHours = 48;
 		private const int DeliverHours = 12;
+		private const int PlotWaitHours = 48;
 
 		private sealed class Held
 		{
@@ -149,7 +154,6 @@ namespace RuinarchPlus.Phase5
 			{
 				case UprisingKind.Assassination:
 					PlotTargets.Add(u.Ruler);
-					u.Leader.jobComponent.CreateAssassinateTargetJob(u.Ruler);
 					Phase2.Curfew.Announce("{0} is plotting against {1} in {2}.", u.Leader, u.Ruler, s);
 					break;
 				case UprisingKind.CivilWar:
@@ -300,9 +304,37 @@ namespace RuinarchPlus.Phase5
 				Unrest.Calm(s, won: true);
 				return true;
 			}
-			bool plotting = leader.jobQueue.HasJob(JOB_TYPE.ASSASSINATE, ruler) || leader.currentJob?.jobType == JOB_TYPE.ASSASSINATE;
-			if (u.Hours >= LongHours || Down(leader) || !plotting)
+			// A plotter asleep or busy still plots; one killed, caught (Restrained) or beaten
+			// (Unconscious) does not. Until the ruler sleeps the plotter waits (up to two days);
+			// then they stay up (woken if asleep) and strike, and have a day to finish it.
+			string why = leader.isDead ? "the plotter is dead" : leader.traitContainer.HasTrait("Restrained") ? "the plotter was caught"
+				: leader.traitContainer.HasTrait("Unconscious") ? "the plotter was beaten" : null;
+			if (why == null && u.StruckAt < 0)
 			{
+				if (u.Hours >= PlotWaitHours)
+				{
+					why = "the ruler was never found asleep";
+				}
+				else if (ruler.traitContainer.HasTrait("Resting") && ruler.hasMarker)
+				{
+					if (leader.traitContainer.HasTrait("Resting"))
+					{
+						leader.interruptComponent.TriggerInterrupt(INTERRUPT.Noise_Wake_Up, leader);
+					}
+					leader.jobComponent.CreateAssassinateTargetJob(ruler);
+					u.StruckAt = u.Hours;
+					RuinarchPlus.Log?.Info($"{leader.name} strikes at {ruler.name} in {s.name} while they sleep (plotter awake={!leader.traitContainer.HasTrait("Resting")}).");
+				}
+			}
+			else if (why == null)
+			{
+				bool fighting = leader.combatComponent.hostilesInRange.Contains(ruler);
+				bool plotting = leader.jobQueue.HasJob(JOB_TYPE.ASSASSINATE, ruler) || leader.currentJob?.jobType == JOB_TYPE.ASSASSINATE || fighting;
+				why = !plotting ? "the plotter gave it up" : u.Hours - u.StruckAt >= LongHours ? "a day passed" : null;
+			}
+			if (why != null)
+			{
+				RuinarchPlus.Log?.Info($"Plot against {ruler.name} in {s.name} over: {why} (plotter wanted={s.owner != null && leader.crimeComponent.IsWantedBy(s.owner)}).");
 				PlotTargets.Remove(ruler);
 				leader.jobQueue.CancelAllJobs(JOB_TYPE.ASSASSINATE);
 				Grudge(ruler, leader);
@@ -324,7 +356,9 @@ namespace RuinarchPlus.Phase5
 				Disengage(u);
 				TakeRule(s, taker, u.Ruler, announce: false);
 				int n = Exile(u.Loyal.Concat(new[] { u.Ruler }), faction);
-				Phase2.Curfew.Announce($"{{0}} has won the civil war in {{1}}; {n} who stood by {{2}} are exiled.", taker, s, u.Ruler);
+				Phase2.Curfew.Announce(n > 0
+					? $"{{0}} has won the civil war in {{1}}; {n} who stood by {{2}} {(n == 1 ? "is" : "are")} exiled."
+					: "{0} has won the civil war in {1}; nobody who stood by {2} is left to exile.", taker, s, u.Ruler);
 				Unrest.Calm(s, won: true);
 				return true;
 			}
@@ -332,7 +366,9 @@ namespace RuinarchPlus.Phase5
 			{
 				Disengage(u);
 				int n = Exile(u.Rebels, faction);
-				Phase2.Curfew.Announce($"{{0}} has won the civil war in {{1}}; {n} rebels are exiled.", u.Ruler, s);
+				Phase2.Curfew.Announce(n > 0
+					? $"{{0}} has won the civil war in {{1}}; {n} {(n == 1 ? "rebel is" : "rebels are")} exiled."
+					: "{0} has won the civil war in {1}; no rebel is left to exile.", u.Ruler, s);
 				Unrest.Calm(s, won: false);
 				return true;
 			}
@@ -597,8 +633,11 @@ namespace RuinarchPlus.Phase5
 		}
 	}
 
-	// In the base game any villager who is not hostile and sees a Restrained non-Criminal
-	// unties them. A held ex-ruler stays tied, unless the one who sees them is their friend.
+	// A held ex-ruler stays tied unless the one who would untie them is their friend. In the
+	// base game villagers untie a Restrained member of their faction who is not wanted, on
+	// sight (Restrained.CreateJobsOnEnterVisionBasedOnTrait) and in their reactions
+	// (ReactionComponent's remove-status reaction). The vision job is not created at all;
+	// the untie action itself (RemoveRestrained) refuses anyone else, whatever queued it.
 	[HarmonyPatch(typeof(Restrained), nameof(Restrained.CreateJobsOnEnterVisionBasedOnTrait))]
 	internal static class Uprisings_KeepHeldTied
 	{
@@ -618,6 +657,25 @@ namespace RuinarchPlus.Phase5
 				RuinarchPlus.Log?.Warning("Uprisings keep-tied failed: " + e.Message);
 			}
 			return true;
+		}
+	}
+
+	[HarmonyPatch(typeof(RemoveRestrained), "AreRequirementsSatisfied")]
+	internal static class Uprisings_KeepHeldTied_Action
+	{
+		private static void Postfix(Character actor, IPointOfInterest poiTarget, ref bool __result)
+		{
+			try
+			{
+				if (__result && poiTarget is Character held && Uprisings.IsHeld(held) && actor != null && !actor.relationshipContainer.IsFriendsWith(held))
+				{
+					__result = false;
+				}
+			}
+			catch (Exception e)
+			{
+				RuinarchPlus.Log?.Warning("Uprisings keep-tied (action) failed: " + e.Message);
+			}
 		}
 	}
 

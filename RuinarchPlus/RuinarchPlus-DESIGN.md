@@ -565,13 +565,18 @@ knowledge).
    rolls its kind, weighted by the people: brawl 50 (leader Diplomatic or Coward x2),
    assassination 15 (leader Evil/Psychopath/Ruthless/Treacherous x3, grudge x2), jailing 20
    with a standing prison (ruler wanted x3), civil war 15 with 12+ adults and 4+ per camp
-   (20+ villagers x2). Assassination: the leader alone, `CreateAssassinateTargetJob`; the
-   killer is recorded by a `Character.Death` postfix; a Murder on their record (witnessed)
-   leaves the rule to the game's succession. Jailing: a brawl, then the old ruler is
-   Restrained and carried (`APPREHEND` job with `DROP_RESTRAINED` to the prison); a prefix on
-   `Restrained.CreateJobsOnEnterVisionBasedOnTrait` keeps villagers from untying them unless
-   friends; after 48 h in the prison the ruler (else the faction leader) executes (grudge or
-   opinion -50), exiles (below 0) or releases them; saved as `held` in the unrest file. The
+   (20+ villagers x2). Assassination: the leader alone waits (up to 48 h) for the ruler to
+   sleep (`Resting`), is woken if asleep (`INTERRUPT.Noise_Wake_Up`) and gets
+   `CreateAssassinateTargetJob` (an open lethal fight via `ResolveCombat`; awake rulers beat
+   5 of 6 plotters in the first test runs); the killer is recorded by a `Character.Death`
+   postfix; a Murder on their record (witnessed) leaves the rule to the game's succession.
+   Jailing: a brawl, then the old ruler is Restrained and carried (`APPREHEND` job with
+   `DROP_RESTRAINED` to the prison); a prefix on `Restrained.CreateJobsOnEnterVisionBasedOnTrait`
+   and a postfix on `RemoveRestrained.AreRequirementsSatisfied` keep villagers from untying
+   them unless friends (the reaction path, `ReactionComponent.cs:1655-1697`, untied one
+   within hours before the second patch); after 48 h in the prison the ruler (else the
+   faction leader) executes (grudge or opinion -50), exiles (below 0) or releases them;
+   saved as `held` in the unrest file. The
    crime system is not used: `CrimeManager.ReactToCrime` never charges a ruler and a
    `CrimeData` needs an action behind it. Civil war: lethal `Fight`, the losing side's
    survivors exiled (`KickOutCharacterAndRollForGrudge`), 24 h without a winner: the ruler

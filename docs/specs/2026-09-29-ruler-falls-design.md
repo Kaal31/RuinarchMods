@@ -82,16 +82,22 @@ the trigger, and calls into it. The current brawl moves there unchanged.
 
 **Brawl.** As in 0.9.0.
 
-**Assassination.** Only the leader acts: `leader.jobComponent.CreateAssassinateTargetJob(ruler)`.
-Announced: "{leader} is plotting against {ruler} in {village}." Each hour:
+**Assassination.** Only the leader acts. Announced: "{leader} is plotting against {ruler} in
+{village}." The game's assassination job is an open, lethal fight (the `DEATH` goal is met
+by `ResolveCombat`); in the first harness runs awake rulers beat or killed 5 of 6 plotters,
+so (amended 2026-09-29, approved in chat) the plotter waits, up to 48 hours, until the ruler
+is asleep (`Resting`), then stays up (woken with the game's `INTERRUPT.Noise_Wake_Up` if
+asleep too; the job, priority 1050, outranks sleep at 500) and strikes:
+`leader.jobComponent.CreateAssassinateTargetJob(ruler)`. Each hour:
 - the ruler dead and the leader not wanted for it by the faction: the leader takes the
   rule (`TakeRule`): "{ruler} of {village} has been assassinated; {leader} takes the rule.";
 - the ruler dead and the leader wanted (witnessed): the leader takes nothing; the game's
   succession and ruler choice stand: "{ruler} of {village} has been murdered by {leader},
   who is now wanted.";
-- after 24 hours with the ruler alive, or the leader dead, Restrained, Unconscious or no
-  longer holding the job: the plot fails (the job is cancelled), the ruler holds a grudge
-  against the leader: "The plot against {ruler} in {village} has failed."
+- never found asleep in 48 hours, a day after striking, or the leader dead, Restrained,
+  Unconscious or no longer holding the job (and not fighting the ruler): the plot fails
+  (the job is cancelled), the ruler holds a grudge against the leader: "The plot against
+  {ruler} in {village} has failed." (`mods.log` says why.)
 
 **Jailing.** Starts as the brawl (same camps, non-lethal). When the ruler is down and the
 rebels win (the brawl's own rule for who takes the rule):
@@ -114,11 +120,14 @@ The mod keeps who it holds (the old ruler, the village, since when). Each hour:
 - not in the prison 12 hours after the uprising (nobody could carry them): released where
   they are, no announcement beyond the overthrow;
 - dead, or left the faction: the mod lets go.
-In the base game any villager who is not hostile and sees a Restrained non-Criminal queues a
-job to untie them (`Restrained.CreateJobsOnEnterVisionBasedOnTrait`, `Restrained.cs:74-104`),
-so a held ruler would be untied at once. A prefix on it returns false for a held ruler
-unless the villager seeing them is their friend (`relationshipContainer.IsFriendsWith`):
-the village leaves them tied, a friend breaks them out.
+In the base game villagers untie a Restrained member of their faction who is not wanted:
+on sight (`Restrained.CreateJobsOnEnterVisionBasedOnTrait`, `Restrained.cs:74-104`) and in
+their reactions (`ReactionComponent.cs:1655-1697`, the remove-status reaction), so a held
+ruler would be untied at once (seen in the first harness run: untied within hours, with no
+friend in the village). A prefix on the first returns false for a held ruler, and a postfix
+on `RemoveRestrained.AreRequirementsSatisfied` refuses the untie action itself, unless the
+villager is their friend (`relationshipContainer.IsFriendsWith`): the village leaves them
+tied, a friend breaks them out.
 The loyal camp winning or the 12 hours running out: as the brawl. The jailing weight needs
 a standing prison (`NPCSettlement.prison`) at the roll.
 
@@ -180,9 +189,10 @@ is that kind), `Uprisings.Weights(village, leader, ruler)`, `Uprisings.HeldSince
    knocked out, the leader rules, and the ruler ends up Restrained inside the Prison; the
    hold is stored in the save file and comes back from it; with the hold shortened, the
    judge's decision matches their opinion (executed, exiled or released).
-4. Civil war (forced in the largest village with 4+ per camp; skipped if none): lethal
-   fighting; the winner's side holds the rule; every surviving member of the losing side
-   has left the faction.
+4. Civil war (forced in the largest village with 4+ adults at home besides the ruler, split
+   in two: forcing skips the roll's size rule and test villages are small; skipped if none):
+   lethal fighting; the winner's side holds the rule; the losing side's leader (or the old
+   ruler) is dead or has left the faction.
 5. UnrestSuite unchanged and still passing.
 By hand: a jailed ruler's Restrained trait survives a real save and load (the game's own
 state; the harness can only replay mod data).

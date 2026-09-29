@@ -1971,7 +1971,8 @@ namespace RuinarchDebug
 			}
 			else
 			{
-				yield return WaitGameHours(26f, () => !PlusBridge.HasUprising(av));
+				// Up to two days waiting for the ruler to sleep, then a day to strike.
+				yield return WaitGameHours(74f, () => !PlusBridge.HasUprising(av));
 				bool unseen = ModsLogHas($"{aRuler.name} of {av.name} has been assassinated; {plotter.name} takes the rule.");
 				bool seen = ModsLogHas($"{aRuler.name} of {av.name} has been murdered by {plotter.name}, who is now wanted.");
 				bool wanted = av.owner != null && plotter.crimeComponent.IsWantedBy(av.owner);
@@ -2003,6 +2004,7 @@ namespace RuinarchDebug
 			else
 			{
 				Character old = jv.ruler;
+				int jailMark = ModsLogLength();
 				yield return RiseAs(jv, "Jailing", c => true, hurtRuler: true);
 				if (PlusBridge.UprisingKind(jv) != "Jailing")
 				{
@@ -2021,7 +2023,15 @@ namespace RuinarchDebug
 					bool stillHeld = PlusBridge.HeldState(old) == "held" && old.traitContainer.HasTrait("Restrained");
 					int friends = jv.residents.Count(c => c != null && !c.isDead && c != old && c.relationshipContainer.IsFriendsWith(old));
 					string detail = $"{old.name}: overthrown={overthrown} (ruler now {jv.ruler?.name ?? "none"}), delivered={delivered}, held 3h later={stillHeld}, state={PlusBridge.HeldState(old) ?? "not held"}, in {old.currentStructure?.name ?? "nowhere"}, friends in the village={friends}";
-					if (overthrown && delivered && !stillHeld && friends > 0 && ModsLogHas($"{old.name}, once ruler of {jv.name}, has escaped the prison."))
+					// The ruler can win the brawl (only one rebel at home, a strong ruler): then
+					// there is nobody to jail.
+					bool putDown = !overthrown && jv.ruler == old
+						&& (ModsLogHasSince(jailMark, $"has put down the uprising in {jv.name}") || ModsLogHasSince(jailMark, $"The uprising in {jv.name} has failed"));
+					if (putDown)
+					{
+						Skip(jailCheck, "the ruler won the brawl: " + detail);
+					}
+					else if (overthrown && delivered && !stillHeld && friends > 0 && ModsLogHas($"{old.name}, once ruler of {jv.name}, has escaped the prison."))
 					{
 						Skip(jailCheck, "a friend freed them: " + detail);
 					}
@@ -2058,16 +2068,19 @@ namespace RuinarchDebug
 
 			// 4. Civil war: half the village for the ruler, half against, to the death.
 			const string warCheck = "a civil war ends with the losing side exiled";
-			NPCSettlement cv = villages.Where(v => v.ruler != null && !v.ruler.isDead).OrderByDescending(v => AdultsAtHome(v).Count).FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 8);
+			// Forced, the war skips the roll's size rule; test villages are small. All but two
+			// rise (a village rises only when most dislike the ruler), the two stand by them.
+			NPCSettlement cv = villages.Where(v => v.ruler != null && !v.ruler.isDead).OrderByDescending(v => AdultsAtHome(v).Count).FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 5);
 			if (cv == null)
 			{
-				Skip(warCheck, "no village with 8+ adults at home besides the ruler: " + string.Join("; ", villages.Select(v => $"{v.name} {AdultsAtHome(v).Count}")));
+				Skip(warCheck, "no village with 5+ adults at home besides the ruler: " + string.Join("; ", villages.Select(v => $"{v.name} {AdultsAtHome(v).Count}")));
 			}
 			else
 			{
 				Character cRuler = cv.ruler;
+				int warMark = ModsLogLength();
 				List<Character> side = AdultsAtHome(cv).Where(c => c != cRuler).ToList();
-				HashSet<Character> rebelSet = new HashSet<Character>(side.Where((c, i) => i % 2 == 0));
+				HashSet<Character> rebelSet = new HashSet<Character>(side.Skip(2));
 				yield return RiseAs(cv, "CivilWar", c => rebelSet.Contains(c), hurtRuler: false);
 				Character warLeader = PlusBridge.UprisingLeader(cv);
 				if (PlusBridge.UprisingKind(cv) != "CivilWar" || warLeader == null)
@@ -2077,12 +2090,13 @@ namespace RuinarchDebug
 				else
 				{
 					yield return WaitGameHours(26f, () => !PlusBridge.HasUprising(cv));
-					bool rebelsWon = ModsLogHas($"has won the civil war in {cv.name};") && ModsLogHas($"who stood by {cRuler.name} are exiled.");
-					bool loyalWon = ModsLogHas($"{cRuler.name} has won the civil war in {cv.name};");
+					bool won = ModsLogHasSince(warMark, $"has won the civil war in {cv.name};");
+					bool loyalWon = ModsLogHasSince(warMark, $"{cRuler.name} has won the civil war in {cv.name};");
+					bool rebelsWon = won && !loyalWon;
 					int died = side.Concat(new[] { cRuler }).Count(c => c.isDead);
 					string detail = $"leader {warLeader.name}, ruler {cRuler.name}: rebels won={rebelsWon} loyal won={loyalWon}; ruler now {cv.ruler?.name ?? "none"}; "
 						+ $"{died} died; leader dead={warLeader.isDead} faction={warLeader.faction?.name ?? "none"}; old ruler dead={cRuler.isDead} faction={cRuler.faction?.name ?? "none"}";
-					if (ModsLogHas($"The civil war in {cv.name} ends with no winner."))
+					if (ModsLogHasSince(warMark, $"The civil war in {cv.name} ends with no winner."))
 					{
 						Skip(warCheck, "no winner: " + detail);
 					}
