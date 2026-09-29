@@ -27,11 +27,10 @@ namespace RuinarchPlus.Phase5
 	/// the village is restless (announced, with its main grievances) and every day each
 	/// villager thinks less of the ruler; it calms down below half of that. At
 	/// <c>unrestUprising</c> an uprising breaks out: the villager who thinks least of the
-	/// ruler leads everyone who dislikes them against the ruler and those who like them, a
-	/// brawl in the game's own non-lethal combat. The ruler knocked out: the leader takes the
-	/// rule (and the faction's leadership if the ruler held it). The rebels all knocked out,
-	/// or 12 hours without a result: the ruler holds, and another uprising may come a day later.
-	/// The score and the recent deaths and losses ride in the save
+	/// ruler leads everyone who dislikes them against the ruler and those who like them. How
+	/// it plays out (a brawl, an assassination plot, jailing, a civil war) is
+	/// <see cref="Phase5.Uprisings"/>; after any of them the village is calm for a day.
+	/// The score, the recent deaths and losses and the jailed ex-rulers ride in the save
 	/// (<c>ModData/ruinarch.plus.unrest.json</c>); an uprising in progress does not (the
 	/// village rises again at the next check).
 	/// </summary>
@@ -40,7 +39,6 @@ namespace RuinarchPlus.Phase5
 		private const string SaveId = "ruinarch.plus.unrest";
 		private const long TicksPerHour = 20;
 		private const long Window = 72 * TicksPerHour;
-		private const int UprisingHours = 12;
 
 		private sealed class State
 		{
@@ -52,21 +50,12 @@ namespace RuinarchPlus.Phase5
 			internal readonly List<long> Losses = new List<long>();
 		}
 
-		private sealed class Uprising
-		{
-			internal Character Leader;
-			internal Character Ruler;
-			internal List<Character> Rebels;
-			internal List<Character> Loyal;
-			internal int Hours;
-		}
-
 		private static readonly Dictionary<NPCSettlement, State> States = new Dictionary<NPCSettlement, State>();
-		private static readonly Dictionary<NPCSettlement, Uprising> Uprisings = new Dictionary<NPCSettlement, Uprising>();
+		private static readonly Dictionary<NPCSettlement, Uprising> Active = new Dictionary<NPCSettlement, Uprising>();
 
 		internal static bool Enabled => RuinarchPlusConfig.Current.unrestEnabled;
 
-		private static long Now => Phase3.MissingPersons.Now;
+		internal static long Now => Phase3.MissingPersons.Now;
 
 		public static void Register()
 		{
@@ -86,7 +75,12 @@ namespace RuinarchPlus.Phase5
 
 		internal static bool IsRestless(NPCSettlement s) => s != null && States.TryGetValue(s, out State st) && st.Restless;
 
-		internal static bool HasUprising(NPCSettlement s) => s != null && Uprisings.ContainsKey(s);
+		internal static bool HasUprising(NPCSettlement s) => s != null && Active.ContainsKey(s);
+
+		/// <summary>Test harness: the leader and kind of a village's uprising in progress.</summary>
+		internal static Character UprisingLeader(NPCSettlement s) => s != null && Active.TryGetValue(s, out Uprising u) ? u.Leader : null;
+
+		internal static string UprisingKindOf(NPCSettlement s) => s != null && Active.TryGetValue(s, out Uprising u) ? u.Kind.ToString() : null;
 
 		/// <summary>Debug menu / test harness: set a village's unrest score.</summary>
 		internal static void SetPoints(NPCSettlement s, float points)
@@ -181,6 +175,14 @@ namespace RuinarchPlus.Phase5
 			{
 				return;
 			}
+			try
+			{
+				Phase5.Uprisings.HourlyHeld();
+			}
+			catch (Exception e)
+			{
+				RuinarchPlus.Log?.Warning("Held ex-rulers check failed: " + e.Message);
+			}
 			for (int i = 0; i < settlements.Count; i++)
 			{
 				try
@@ -199,9 +201,12 @@ namespace RuinarchPlus.Phase5
 
 		private static void Update(NPCSettlement s)
 		{
-			if (Uprisings.ContainsKey(s))
+			if (Active.TryGetValue(s, out Uprising up))
 			{
-				Advance(s);
+				if (Phase5.Uprisings.Advance(s, up))
+				{
+					Active.Remove(s);
+				}
 				return;
 			}
 			State st = StateOf(s);
@@ -260,11 +265,6 @@ namespace RuinarchPlus.Phase5
 				&& !c.traitContainer.HasTrait("Restrained", "Enslaved", "Unconscious") && !c.crimeComponent.IsWantedBy(s.owner);
 		}
 
-		private static bool Down(Character c)
-		{
-			return c == null || c.isDead || !c.hasMarker || !c.limiterComponent.canPerform || c.traitContainer.HasTrait("Unconscious", "Restrained");
-		}
-
 		private static void Rise(NPCSettlement s, State st, Character ruler)
 		{
 			List<Character> pool = Famine.Villagers(s).Where(c => CanTakePart(s, c, ruler)).ToList();
@@ -292,132 +292,19 @@ namespace RuinarchPlus.Phase5
 				Rebels = pool.Where(c => c.relationshipContainer.GetTotalOpinion(ruler) < 0).ToList(),
 				Loyal = pool.Where(c => c.relationshipContainer.GetTotalOpinion(ruler) > 0).ToList(),
 			};
-			Uprisings[s] = u;
-			Phase2.Curfew.Announce($"{{0}} leads an uprising against {{1}} in {{2}}! ({u.Rebels.Count} rise against the ruler, {u.Loyal.Count} stand by them.)", leader, ruler, s);
-			Engage(u);
+			Active[s] = u;
+			Phase5.Uprisings.Start(s, u);
 		}
 
-		// Everyone on each side goes for the other side (the game's own knockout brawl).
-		private static void Engage(Uprising u)
+		/// <summary>An uprising is over: a day's calm; won, the village is content again.</summary>
+		internal static void Calm(NPCSettlement s, bool won)
 		{
-			List<Character> defenders = u.Loyal.Concat(new[] { u.Ruler }).Where(c => !Down(c)).ToList();
-			List<Character> rebels = u.Rebels.Where(c => !Down(c)).ToList();
-			foreach (Character r in rebels)
+			State st = StateOf(s);
+			st.CalmUntil = Now + 24 * TicksPerHour;
+			if (won)
 			{
-				foreach (Character d in defenders)
-				{
-					r.combatComponent.Fight(d, CombatManager.Anger, null, isLethal: false);
-				}
-			}
-			foreach (Character d in defenders)
-			{
-				foreach (Character r in rebels)
-				{
-					d.combatComponent.Fight(r, CombatManager.Anger, null, isLethal: false);
-				}
-			}
-		}
-
-		private static void Disengage(Uprising u)
-		{
-			List<Character> all = u.Rebels.Concat(u.Loyal).Concat(new[] { u.Ruler }).Where(c => c != null && !c.isDead).ToList();
-			foreach (Character a in all)
-			{
-				foreach (Character b in all)
-				{
-					if (a != b)
-					{
-						a.combatComponent.RemoveHostileInRange(b);
-					}
-				}
-			}
-		}
-
-		private static void Advance(NPCSettlement s)
-		{
-			Uprising u = Uprisings[s];
-			u.Hours++;
-			bool rulerDown = Down(u.Ruler) || s.ruler != u.Ruler;
-			bool rebelsDown = u.Rebels.All(Down);
-			// The ruler down: the leader takes the rule, or, knocked out too, the rebel still
-			// standing who thinks least of the ruler.
-			Character taker = !rulerDown ? null : !Down(u.Leader) ? u.Leader
-				: u.Rebels.Where(c => !Down(c)).OrderBy(c => c.relationshipContainer.GetTotalOpinion(u.Ruler)).FirstOrDefault();
-			if (taker != null)
-			{
-				End(s, u);
-				TakeRule(s, taker, u.Ruler);
-				foreach (Character c in u.Loyal.Where(c => !c.isDead))
-				{
-					c.relationshipContainer.AdjustOpinion(c, taker, "Uprising", -30, "overthrew the ruler", createJobsOnReduce: false);
-				}
-				State st = StateOf(s);
 				st.Points = 0f;
 				st.Restless = false;
-				return;
-			}
-			if (rebelsDown || rulerDown || u.Hours >= UprisingHours)
-			{
-				End(s, u);
-				if (!u.Ruler.isDead && !u.Leader.isDead && !u.Ruler.relationshipContainer.HasGrudgeAgainst(u.Leader))
-				{
-					u.Ruler.relationshipContainer.SetHasGrudgeAgainst(u.Ruler, u.Leader, p_state: true);
-				}
-				Phase2.Curfew.Announce(rebelsDown
-					? "{0} has put down the uprising in {1}; {2} and the rebels are beaten."
-					: "The uprising in {1} has failed: {0} keeps the rule, and {2} backs down.", u.Ruler, s, u.Leader);
-				// (The ruler down with every rebel down too also lands here: nobody is left to take it.)
-				StateOf(s).CalmUntil = Now + 24 * TicksPerHour;
-				return;
-			}
-			Engage(u);
-		}
-
-		private static void End(NPCSettlement s, Uprising u)
-		{
-			Uprisings.Remove(s);
-			Disengage(u);
-		}
-
-		/// <summary>
-		/// <paramref name="leader"/> takes the rule of the village. A faction leader always
-		/// rules their home village (<c>Faction.ProcessFactionLeaderAsSettlementRuler</c> puts
-		/// them back), so a ruler who is the faction leader is overthrown as leader too, the way
-		/// the game's own Overthrow Leader scheme does it (<c>Become_Faction_Leader</c>, a grudge).
-		/// </summary>
-		private static void TakeRule(NPCSettlement s, Character leader, Character ruler)
-		{
-			Faction faction = s.owner;
-			bool factionLeader = faction != null && faction.leader == ruler;
-			if (factionLeader)
-			{
-				leader.interruptComponent.TriggerInterrupt(INTERRUPT.Become_Faction_Leader, leader, "succession");
-				if (s.ruler == ruler)
-				{
-					s.SetRuler(null);
-				}
-			}
-			if (s.ruler != leader && (!leader.interruptComponent.TriggerInterrupt(INTERRUPT.Become_Settlement_Ruler, leader) || s.ruler != leader))
-			{
-				s.SetRuler(leader);
-			}
-			if (ruler.isDead)
-			{
-				Phase2.Curfew.Announce("{0} has taken the rule of {1} in an uprising.", leader, s);
-				return;
-			}
-			ruler.relationshipContainer.AdjustOpinion(ruler, leader, "Deposed", -30, "took the rule of the village", createJobsOnReduce: false);
-			if (!ruler.relationshipContainer.HasGrudgeAgainst(leader))
-			{
-				ruler.relationshipContainer.SetHasGrudgeAgainst(ruler, leader, p_state: true);
-			}
-			if (factionLeader)
-			{
-				Phase2.Curfew.Announce("{0} has overthrown {1} as leader of " + faction.name + " and taken the rule of {2} in an uprising.", leader, ruler, s);
-			}
-			else
-			{
-				Phase2.Curfew.Announce("{0} has taken the rule of {1} from {2} in an uprising.", leader, s, ruler);
 			}
 		}
 
@@ -437,18 +324,21 @@ namespace RuinarchPlus.Phase5
 						st.Restless ? "1" : "0", st.RestlessHours.ToString(), st.CalmUntil.ToString(), string.Join(",", st.Deaths), string.Join(",", st.Losses)));
 				}
 			}
-			return file.villages.Count == 0 ? null : JsonUtility.ToJson(file);
+			file.held = Phase5.Uprisings.SaveHeld();
+			return file.villages.Count == 0 && file.held.Count == 0 ? null : JsonUtility.ToJson(file);
 		}
 
 		private static void Load(string json)
 		{
 			States.Clear();
-			Uprisings.Clear();
-			if (string.IsNullOrEmpty(json))
+			Active.Clear();
+			UnrestSaveData file = string.IsNullOrEmpty(json) ? null : JsonUtility.FromJson<UnrestSaveData>(json);
+			Phase5.Uprisings.LoadHeld(file?.held);
+			if (file == null)
 			{
 				return;
 			}
-			foreach (string entry in JsonUtility.FromJson<UnrestSaveData>(json)?.villages ?? new List<string>())
+			foreach (string entry in file.villages ?? new List<string>())
 			{
 				string[] p = entry.Split('|');
 				if (p.Length < 7 || !(LandmarkManager.Instance.GetSettlementByPersistentID(p[0]) is NPCSettlement s))
@@ -463,7 +353,7 @@ namespace RuinarchPlus.Phase5
 				st.Deaths.AddRange(p[5].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(long.Parse));
 				st.Losses.AddRange(p[6].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(long.Parse));
 			}
-			RuinarchPlus.Log?.Info($"Unrest loaded: {States.Count} village(s), {States.Values.Count(v => v.Restless)} restless.");
+			RuinarchPlus.Log?.Info($"Unrest loaded: {States.Count} village(s), {States.Values.Count(v => v.Restless)} restless, {file.held?.Count ?? 0} ex-ruler(s) held.");
 		}
 	}
 
@@ -471,6 +361,7 @@ namespace RuinarchPlus.Phase5
 	public class UnrestSaveData
 	{
 		public List<string> villages = new List<string>();
+		public List<string> held = new List<string>();
 	}
 
 	[HarmonyPatch(typeof(GameManager), "TickStarted")]

@@ -268,6 +268,7 @@ namespace RuinarchDebug
 			if (Runs("FamineSuite")) { yield return Safe("FamineSuite", FamineSuite()); }
 			// Kills a villager, wrecks a building and sets the village against its ruler twice.
 			if (Runs("UnrestSuite")) { yield return Safe("UnrestSuite", UnrestSuite()); }
+			if (Runs("UprisingKindsSuite")) { yield return Safe("UprisingKindsSuite", UprisingKindsSuite()); }
 			if (Runs("HuntSuite")) { yield return Safe("HuntSuite", HuntSuite()); }
 			if (Runs("TradeSuite")) { yield return Safe("TradeSuite", TradeSuite()); }
 			// After the burial and knowledge tests: a plague answered with Exile makes the
@@ -1656,21 +1657,11 @@ namespace RuinarchDebug
 				Skip("unrest", "no village with a ruler and 6+ adult villagers: " + string.Join("; ", Villages().Select(Describe)));
 				yield break;
 			}
-			// Residents out at work, trading or hunting neither judge the ruler nor rise: bring
-			// the free ones home, so the rebels and the ruler's side are the whole village.
-			LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
-			Guard("bring the residents home", () =>
-			{
-				foreach (Character c in village.residents.Where(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && r.hasMarker
-					&& !PlusBridge.IsChild(r) && r.carryComponent.isBeingCarriedBy == null && !r.partyComponent.hasParty && !r.traitContainer.HasTrait("Restrained")
-					&& r.gridTileLocation != null && !r.gridTileLocation.IsPartOfSettlement(village)).ToList())
-				{
-					CharacterManager.Instance.Teleport(c, home);
-				}
-				return village;
-			});
+			BringResidentsHome(village);
 			Log($"unrest test village: {Describe(village)} ruler={village.ruler.name} (faction leader={village.ruler.isFactionLeader}) adults at home={adults(village).Count}");
 			PlusBridge.SetConfig("unrestEnabled", true);
+			// This suite measures the brawl; the other kinds are UprisingKindsSuite's.
+			PlusBridge.SetConfig("uprisingKindsEnabled", false);
 			PlusBridge.SetUnrest(village, 0f);
 			Log("  grievances at the start: " + string.Join(", ", PlusBridge.UnrestReasons(village)));
 
@@ -1835,6 +1826,272 @@ namespace RuinarchDebug
 						$"rose={rose2} ruler={village.ruler?.name} (was {newRuler.name}); challenger {rebel.name} unconscious={rebel.traitContainer.HasTrait("Unconscious")} grudge={newRuler.relationshipContainer.HasGrudgeAgainst(rebel)}"));
 				}
 			}
+			foreach (NPCSettlement v in Villages())
+			{
+				PlusBridge.SetUnrest(v, 0f);
+			}
+			PlusBridge.SetConfig("unrestEnabled", false);
+			PlusBridge.SetConfig("uprisingKindsEnabled", true);
+		}
+
+		// Residents out at work, trading or hunting neither judge the ruler nor rise: bring
+		// the free ones home, so the rebels and the ruler's side are the whole village.
+		private void BringResidentsHome(NPCSettlement village)
+		{
+			LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
+			Guard("bring the residents home", () =>
+			{
+				foreach (Character c in village.residents.Where(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && r.hasMarker
+					&& !PlusBridge.IsChild(r) && r.carryComponent.isBeingCarriedBy == null && !r.partyComponent.hasParty && !r.traitContainer.HasTrait("Restrained")
+					&& r.gridTileLocation != null && !r.gridTileLocation.IsPartOfSettlement(village)).ToList())
+				{
+					CharacterManager.Instance.Teleport(c, home);
+				}
+				return village;
+			});
+		}
+
+		private static List<Character> AdultsAtHome(NPCSettlement v) => v.residents.Where(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient()
+			&& r.hasMarker && !PlusBridge.IsChild(r) && r.gridTileLocation != null && r.gridTileLocation.IsPartOfSettlement(v)).ToList();
+
+		// Turn <paramref name="village"/>'s adults against its ruler (those <paramref name="rebel"/>
+		// picks; the rest for the ruler) and have it rise now as <paramref name="kind"/>.
+		private IEnumerator RiseAs(NPCSettlement village, string kind, Func<Character, bool> rebel, bool hurtRuler)
+		{
+			Character ruler = village.ruler;
+			BringResidentsHome(village);
+			Guard("set the villagers' feelings for the ruler", () =>
+			{
+				foreach (Character c in AdultsAtHome(village).Where(c => c != ruler))
+				{
+					c.relationshipContainer.AdjustOpinion(c, ruler, "Autotest", rebel(c) ? -400 : 400, "autotest", createJobsOnReduce: false);
+				}
+				return ruler;
+			});
+			PlusBridge.ForceUprising(village, kind);
+			float at = PlusBridge.Config("unrestUprising") is int uu ? uu : 72;
+			Action hurt = () =>
+			{
+				if (hurtRuler && !ruler.isDead && ruler.currentHP > Math.Max(1, ruler.maxHP / 5))
+				{
+					ruler.AdjustHP(-(ruler.currentHP - Math.Max(1, ruler.maxHP / 5)), ELEMENTAL_TYPE.Normal);
+				}
+			};
+			// Up to a night: asleep, nobody rises until morning.
+			yield return WaitGameHours(12f, () =>
+			{
+				PlusBridge.SetUnrest(village, Math.Max(PlusBridge.UnrestPoints(village), at));
+				hurt();
+				return PlusBridge.HasUprising(village) || ruler.isDead || village.ruler != ruler;
+			});
+			Log($"  {village.name} rose as {PlusBridge.UprisingKind(village) ?? "nothing"} (asked {kind}): leader {PlusBridge.UprisingLeader(village)?.name ?? "none"}, ruler {ruler.name} dead={ruler.isDead} ruler now {village.ruler?.name ?? "none"}");
+		}
+
+		// Other ways a ruler falls (Phase5/Uprisings.cs): the kind weights for real people, then
+		// each kind forced on a village turned against its ruler.
+		private IEnumerator UprisingKindsSuite()
+		{
+			if (!PlusBridge.Available || !PlusBridge.UprisingKindsAvailable || PlusBridge.UnrestPoints(null) < 0f)
+			{
+				Skip("uprising kinds", "RuinarchPlus (with uprising kinds) not loaded");
+				yield break;
+			}
+			PlusBridge.SetConfig("unrestEnabled", true);
+			PlusBridge.SetConfig("uprisingKindsEnabled", true);
+			Func<NPCSettlement, int> residents = v => v.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && !PlusBridge.IsChild(r));
+			List<NPCSettlement> villages = Villages().Where(v => v.owner != null && v.owner.isMajorFaction && v.ruler != null && !v.ruler.isDead && !v.isPlagued && v.cityCenter != null)
+				.OrderByDescending(v => residents(v)).ToList();
+			Func<Dictionary<string, float>, string, float> w = (d, k) => d.TryGetValue(k, out float f) ? f : -1f;
+			Func<Dictionary<string, float>, string> show = d => string.Join(", ", d.Select(kv => $"{kv.Key}={kv.Value:0}"));
+			if (villages.Count == 0)
+			{
+				Skip("uprising kinds", "no village of a major faction with a ruler: " + string.Join("; ", Villages().Select(Describe)));
+				yield break;
+			}
+
+			// 1. The weights, for real people.
+			NPCSettlement wv = villages[0];
+			Character wr = wv.ruler;
+			Character plain = AdultsAtHome(wv).Concat(wv.residents).FirstOrDefault(c => c != null && c != wr && !c.isDead && c.isNormalCharacter
+				&& !c.traitContainer.HasTrait("Evil", "Psychopath", "Ruthless", "Treacherous") && !c.relationshipContainer.HasGrudgeAgainst(wr));
+			if (plain == null)
+			{
+				Skip("a Psychopath leader makes an assassination likelier", $"nobody in {wv.name} without such traits");
+			}
+			else
+			{
+				Dictionary<string, float> before = PlusBridge.UprisingWeights(wv, plain, wr);
+				bool added = Guard("make the leader a Psychopath", () => plain.traitContainer.AddTrait(plain, "Psychopath") ? plain : null) != null;
+				Dictionary<string, float> after = PlusBridge.UprisingWeights(wv, plain, wr);
+				Try("take the Psychopath trait back", () => plain.traitContainer.RemoveTrait(plain, "Psychopath"));
+				Check("a Psychopath leader makes an assassination likelier", () =>
+					(added && w(before, "Assassination") > 0 && Math.Abs(w(after, "Assassination") - 3 * w(before, "Assassination")) < 0.5f,
+					$"{plain.name}: before [{show(before)}], as a Psychopath [{show(after)}] (added={added})"));
+			}
+			NPCSettlement noPrison = villages.FirstOrDefault(v => v.prison == null || v.prison.hasBeenDestroyed);
+			Character npLeader = noPrison?.residents.FirstOrDefault(c => c != null && c != noPrison.ruler && !c.isDead && c.isNormalCharacter);
+			if (npLeader == null)
+			{
+				Skip("a village without a prison never jails its ruler", "every village has a prison");
+			}
+			else
+			{
+				Dictionary<string, float> d = PlusBridge.UprisingWeights(noPrison, npLeader, noPrison.ruler);
+				Check("a village without a prison never jails its ruler", () => (w(d, "Jailing") == 0f, $"{noPrison.name}: [{show(d)}]"));
+			}
+			NPCSettlement small = villages.LastOrDefault(v => residents(v) < 12);
+			Character smallLeader = small?.residents.FirstOrDefault(c => c != null && c != small.ruler && !c.isDead && c.isNormalCharacter);
+			if (smallLeader == null)
+			{
+				Skip("a small village has no civil war", "no village under 12 people");
+			}
+			else
+			{
+				Dictionary<string, float> d = PlusBridge.UprisingWeights(small, smallLeader, small.ruler);
+				Check("a small village has no civil war", () => (w(d, "CivilWar") == 0f, $"{small.name} ({residents(small)} people): [{show(d)}]"));
+			}
+			if (plain != null)
+			{
+				PlusBridge.SetConfig("uprisingKindsEnabled", false);
+				Dictionary<string, float> off = PlusBridge.UprisingWeights(wv, plain, wr);
+				PlusBridge.SetConfig("uprisingKindsEnabled", true);
+				Check("with uprisingKindsEnabled off every uprising is a brawl", () =>
+					(w(off, "Brawl") > 0 && off.Where(kv => kv.Key != "Brawl").All(kv => kv.Value == 0f), $"[{show(off)}]"));
+			}
+
+			// 2. An assassination plot.
+			const string plotCheck = "a plot kills the ruler: unseen, the leader rules; seen, the leader is wanted";
+			NPCSettlement av = villages.FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 3) ?? villages[0];
+			Character aRuler = av.ruler;
+			yield return RiseAs(av, "Assassination", c => true, hurtRuler: false);
+			Character plotter = PlusBridge.UprisingLeader(av);
+			if (PlusBridge.UprisingKind(av) != "Assassination" || plotter == null)
+			{
+				Skip(plotCheck, $"no plot started in {av.name}: uprising={PlusBridge.UprisingKind(av) ?? "none"}, {aRuler.name} dead={aRuler.isDead}, ruler now {av.ruler?.name ?? "none"}");
+			}
+			else
+			{
+				yield return WaitGameHours(26f, () => !PlusBridge.HasUprising(av));
+				bool unseen = ModsLogHas($"{aRuler.name} of {av.name} has been assassinated; {plotter.name} takes the rule.");
+				bool seen = ModsLogHas($"{aRuler.name} of {av.name} has been murdered by {plotter.name}, who is now wanted.");
+				bool wanted = av.owner != null && plotter.crimeComponent.IsWantedBy(av.owner);
+				string detail = $"{plotter.name} vs {aRuler.name}: ruler dead={aRuler.isDead}, ruler now {av.ruler?.name ?? "none"}, plotter wanted={wanted}, unseen={unseen} seen={seen}";
+				if (!aRuler.isDead && ModsLogHas($"The plot against {aRuler.name} in {av.name} has failed."))
+				{
+					Skip(plotCheck, "the plot failed: " + detail);
+				}
+				else Check(plotCheck, () => ((unseen && aRuler.isDead && av.ruler == plotter && !wanted) || (seen && aRuler.isDead && av.ruler != plotter && wanted), detail));
+			}
+
+			// 3. Jailing: brawl, carried to the prison, left tied, judged after two days.
+			const string jailCheck = "rebels who jail the ruler carry them to the prison, and the village leaves them tied";
+			const string jailSaveCheck = "a jailed ex-ruler is kept in the save file";
+			const string judgeCheck = "after two days the ruler decides the prisoner's fate by what they think of them";
+			NPCSettlement jv = villages.Where(v => v != av && !v.ruler.isDead).FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 3)
+				?? villages.FirstOrDefault(v => v.ruler != null && !v.ruler.isDead && AdultsAtHome(v).Count(c => c != v.ruler) >= 3);
+			if (jv != null && (jv.prison == null || jv.prison.hasBeenDestroyed))
+			{
+				Guard("build a prison", () => InstantBuildVanilla(jv, STRUCTURE_TYPE.PRISON));
+			}
+			if (jv == null || jv.prison == null || jv.prison.hasBeenDestroyed)
+			{
+				string why = jv == null ? "no village with a ruler and 3+ adults at home" : $"no prison in {jv.name} (none could be built)";
+				Skip(jailCheck, why);
+				Skip(jailSaveCheck, why);
+				Skip(judgeCheck, why);
+			}
+			else
+			{
+				Character old = jv.ruler;
+				yield return RiseAs(jv, "Jailing", c => true, hurtRuler: true);
+				if (PlusBridge.UprisingKind(jv) != "Jailing")
+				{
+					string why = $"no jailing uprising in {jv.name}: uprising={PlusBridge.UprisingKind(jv) ?? "none"}, {old.name} dead={old.isDead}, ruler now {jv.ruler?.name ?? "none"}";
+					Skip(jailCheck, why);
+					Skip(jailSaveCheck, why);
+					Skip(judgeCheck, why);
+				}
+				else
+				{
+					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(jv));
+					bool overthrown = jv.ruler != old && ModsLogHas($"has taken the rule of {jv.name} and holds {old.name} in the prison.");
+					yield return WaitGameHours(12f, () => PlusBridge.HeldState(old) != "carrying");
+					bool delivered = PlusBridge.HeldState(old) == "held" && old.currentStructure == jv.prison;
+					yield return WaitGameHours(3f, null);
+					bool stillHeld = PlusBridge.HeldState(old) == "held" && old.traitContainer.HasTrait("Restrained");
+					int friends = jv.residents.Count(c => c != null && !c.isDead && c != old && c.relationshipContainer.IsFriendsWith(old));
+					string detail = $"{old.name}: overthrown={overthrown} (ruler now {jv.ruler?.name ?? "none"}), delivered={delivered}, held 3h later={stillHeld}, state={PlusBridge.HeldState(old) ?? "not held"}, in {old.currentStructure?.name ?? "nowhere"}, friends in the village={friends}";
+					if (overthrown && delivered && !stillHeld && friends > 0 && ModsLogHas($"{old.name}, once ruler of {jv.name}, has escaped the prison."))
+					{
+						Skip(jailCheck, "a friend freed them: " + detail);
+					}
+					else Check(jailCheck, () => (overthrown && delivered && stillHeld, detail));
+					if (!stillHeld)
+					{
+						Skip(jailSaveCheck, "not held: " + detail);
+						Skip(judgeCheck, "not held: " + detail);
+					}
+					else
+					{
+						string saved = null;
+						yield return SaveAndRead("ruinarch.plus.unrest.json", (j, e) => saved = j);
+						if (saved != null)
+						{
+							ReplayLoad("ruinarch.plus.unrest.json", saved);
+						}
+						Check(jailSaveCheck, () => (saved != null && saved.Contains(old.persistentID) && PlusBridge.HeldState(old) == "held",
+							$"saved={(saved == null ? "none" : saved.Contains(old.persistentID) ? "with them" : "without them")} after load={PlusBridge.HeldState(old) ?? "not held"}"));
+						Character judge = jv.ruler != null && !jv.ruler.isDead && jv.ruler != old ? jv.ruler : jv.owner?.leader as Character;
+						int opinion = judge == null ? 0 : judge.relationshipContainer.GetTotalOpinion(old);
+						bool grudge = judge != null && judge.relationshipContainer.HasGrudgeAgainst(old);
+						string expect = judge == null ? "released" : grudge || opinion <= -50 ? "executed" : opinion < 0 ? "exiled" : "released";
+						Try("let two days pass for the prisoner", () => PlusBridge.SetHeldSince(old, PlusBridge.PlusNow - 48 * GameManager.ticksPerHour));
+						yield return WaitGameHours(2f, () => PlusBridge.HeldState(old) == null);
+						bool happened = expect == "executed" ? old.isDead
+							: expect == "exiled" ? !old.isDead && old.faction != jv.owner && !old.traitContainer.HasTrait("Restrained")
+							: !old.isDead && old.faction == jv.owner && !old.traitContainer.HasTrait("Restrained");
+						Check(judgeCheck, () => (PlusBridge.HeldState(old) == null && happened,
+							$"judge {judge?.name ?? "none"} (opinion {opinion}, grudge={grudge}) should have {expect} {old.name}: dead={old.isDead} faction={old.faction?.name ?? "none"} restrained={old.traitContainer.HasTrait("Restrained")} held={PlusBridge.HeldState(old) ?? "no"}"));
+					}
+				}
+			}
+
+			// 4. Civil war: half the village for the ruler, half against, to the death.
+			const string warCheck = "a civil war ends with the losing side exiled";
+			NPCSettlement cv = villages.Where(v => v.ruler != null && !v.ruler.isDead).OrderByDescending(v => AdultsAtHome(v).Count).FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 8);
+			if (cv == null)
+			{
+				Skip(warCheck, "no village with 8+ adults at home besides the ruler: " + string.Join("; ", villages.Select(v => $"{v.name} {AdultsAtHome(v).Count}")));
+			}
+			else
+			{
+				Character cRuler = cv.ruler;
+				List<Character> side = AdultsAtHome(cv).Where(c => c != cRuler).ToList();
+				HashSet<Character> rebelSet = new HashSet<Character>(side.Where((c, i) => i % 2 == 0));
+				yield return RiseAs(cv, "CivilWar", c => rebelSet.Contains(c), hurtRuler: false);
+				Character warLeader = PlusBridge.UprisingLeader(cv);
+				if (PlusBridge.UprisingKind(cv) != "CivilWar" || warLeader == null)
+				{
+					Skip(warCheck, $"no civil war in {cv.name}: uprising={PlusBridge.UprisingKind(cv) ?? "none"}, ruler now {cv.ruler?.name ?? "none"}");
+				}
+				else
+				{
+					yield return WaitGameHours(26f, () => !PlusBridge.HasUprising(cv));
+					bool rebelsWon = ModsLogHas($"has won the civil war in {cv.name};") && ModsLogHas($"who stood by {cRuler.name} are exiled.");
+					bool loyalWon = ModsLogHas($"{cRuler.name} has won the civil war in {cv.name};");
+					int died = side.Concat(new[] { cRuler }).Count(c => c.isDead);
+					string detail = $"leader {warLeader.name}, ruler {cRuler.name}: rebels won={rebelsWon} loyal won={loyalWon}; ruler now {cv.ruler?.name ?? "none"}; "
+						+ $"{died} died; leader dead={warLeader.isDead} faction={warLeader.faction?.name ?? "none"}; old ruler dead={cRuler.isDead} faction={cRuler.faction?.name ?? "none"}";
+					if (ModsLogHas($"The civil war in {cv.name} ends with no winner."))
+					{
+						Skip(warCheck, "no winner: " + detail);
+					}
+					else Check(warCheck, () =>
+						(rebelsWon ? rebelSet.Contains(cv.ruler) && (cRuler.isDead || cRuler.faction != cv.owner)
+							: loyalWon && cv.ruler == cRuler && (warLeader.isDead || warLeader.faction != cv.owner), detail));
+				}
+			}
+
 			foreach (NPCSettlement v in Villages())
 			{
 				PlusBridge.SetUnrest(v, 0f);

@@ -160,6 +160,41 @@ namespace RuinarchDebug
 
 		internal static bool HasUprising(NPCSettlement village) => UnrestType?.GetMethod("HasUprising", Any)?.Invoke(null, new object[] { village }) is bool b && b;
 
+		private static Type UprisingsType => Plus?.GetType("RuinarchPlus.Phase5.Uprisings");
+
+		internal static bool UprisingKindsAvailable => UprisingsType != null;
+
+		/// <summary>The next uprising in <paramref name="village"/> is <paramref name="kind"/> (Brawl, Assassination, Jailing, CivilWar).</summary>
+		internal static void ForceUprising(NPCSettlement village, string kind) => UprisingsType?.GetMethod("ForceNext", Any)?.Invoke(null, new object[] { village, kind });
+
+		/// <summary>The kind weights for an uprising led by <paramref name="leader"/>: kind -> weight.</summary>
+		internal static Dictionary<string, float> UprisingWeights(NPCSettlement village, Character leader, Character ruler)
+		{
+			string text = UprisingsType?.GetMethod("WeightsText", Any)?.Invoke(null, new object[] { village, leader, ruler }) as string;
+			Dictionary<string, float> w = new Dictionary<string, float>();
+			foreach (string part in (text ?? "").Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries))
+			{
+				string[] kv = part.Split('=');
+				if (kv.Length == 2 && float.TryParse(kv[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f))
+				{
+					w[kv[0]] = f;
+				}
+			}
+			return w;
+		}
+
+		internal static Character UprisingLeader(NPCSettlement village) => UnrestType?.GetMethod("UprisingLeader", Any)?.Invoke(null, new object[] { village }) as Character;
+
+		internal static string UprisingKind(NPCSettlement village) => UnrestType?.GetMethod("UprisingKindOf", Any)?.Invoke(null, new object[] { village }) as string;
+
+		/// <summary>A jailed ex-ruler: "carrying" (on the way to the prison), "held", or null.</summary>
+		internal static string HeldState(Character c) => UprisingsType?.GetMethod("HeldState", Any)?.Invoke(null, new object[] { c }) as string;
+
+		internal static void SetHeldSince(Character c, long tick) => UprisingsType?.GetMethod("HeldSince", Any)?.Invoke(null, new object[] { c, tick });
+
+		/// <summary>Ruinarch+'s clock (game ticks), the one its timers count in.</summary>
+		internal static long PlusNow => UnrestType?.GetProperty("Now", Any)?.GetValue(null) is long t ? t : 0L;
+
 		/// <summary>Whether <paramref name="village"/> counts as hungry (sends hunters).</summary>
 		internal static bool IsHungry(NPCSettlement village)
 		{

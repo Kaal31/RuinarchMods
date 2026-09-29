@@ -92,11 +92,15 @@ namespace RuinarchPlus
 		// (famine and plague 1, an attack 1, recent deaths and lost buildings 0.5 each, the
 		// unburied dead, homelessness and criminals walking free 0.5, a disliked ruler 1) and
 		// falls by 1 when there is nothing. At unrestRestless the village is restless and thinks
-		// less of its ruler each day; at unrestUprising it rises against the ruler (a brawl: the
-		// ruler's side against the rebels; the ruler knocked out loses the rule).
+		// less of its ruler each day; at unrestUprising it rises against the ruler.
 		public bool unrestEnabled = true;
 		public int unrestRestless = 24;
 		public int unrestUprising = 72;
+		// How an uprising plays out, a roll the people shape: a brawl, an assassination plot
+		// (likelier with an Evil, Psychopath, Ruthless or Treacherous leader), jailing the ruler
+		// (needs a prison; after two days the new ruler executes, exiles or releases them) or,
+		// in a big village, a civil war whose losers are exiled. Set false: always a brawl.
+		public bool uprisingKindsEnabled = true;
 		// Hunting: every 6 hours a hungry village (in famine, or a fifth of its villagers
 		// starving) sends up to huntersPerTrip fighters, Hunters first, after wild animals
 		// nearby; the meat is carried to the village's storage.

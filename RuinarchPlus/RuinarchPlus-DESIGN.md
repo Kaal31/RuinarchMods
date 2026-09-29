@@ -560,13 +560,22 @@ knowledge).
    `BUTCHER` on the carcass; a postfix on `Butcher.AfterTransformSuccess` hauls the meat to the
    main storage. (A single `PRODUCE_FOOD`/`BUTCHER` job on a live animal never got planned.)
    *(verified in game)*
-   **Next for unrest (from play feedback): other ways a ruler falls.** The brawl between the
-   two camps shipped (Unrest and uprisings above). Still to come, depending on the village and
-   the people involved: a civil war in a larger village (the loser's camp is exiled or leaves
-   the faction), an assassination of the old ruler (the game's `ASSASSINATE` / murder paths,
-   with its crime and witnesses), or the old ruler jailed (the game's apprehend / imprison
-   flow into the village prison). Bigger villages and stronger factions within them make war
-   more likely than a brawl.
+   **Other ways a ruler falls: shipped** (`Phase5/Uprisings.cs`, config
+   `uprisingKindsEnabled`; spec `docs/specs/2026-09-29-ruler-falls-design.md`). An uprising
+   rolls its kind, weighted by the people: brawl 50 (leader Diplomatic or Coward x2),
+   assassination 15 (leader Evil/Psychopath/Ruthless/Treacherous x3, grudge x2), jailing 20
+   with a standing prison (ruler wanted x3), civil war 15 with 12+ adults and 4+ per camp
+   (20+ villagers x2). Assassination: the leader alone, `CreateAssassinateTargetJob`; the
+   killer is recorded by a `Character.Death` postfix; a Murder on their record (witnessed)
+   leaves the rule to the game's succession. Jailing: a brawl, then the old ruler is
+   Restrained and carried (`APPREHEND` job with `DROP_RESTRAINED` to the prison); a prefix on
+   `Restrained.CreateJobsOnEnterVisionBasedOnTrait` keeps villagers from untying them unless
+   friends; after 48 h in the prison the ruler (else the faction leader) executes (grudge or
+   opinion -50), exiles (below 0) or releases them; saved as `held` in the unrest file. The
+   crime system is not used: `CrimeManager.ReactToCrime` never charges a ruler and a
+   `CrimeData` needs an action behind it. Civil war: lethal `Fight`, the losing side's
+   survivors exiled (`KickOutCharacterAndRollForGrudge`), 24 h without a winner: the ruler
+   holds. *(verification pending)*
 3. **Traders: shipped** (`Phase5/Traders.cs`, config `tradeEnabled`, `tradeAmount` 40). Daily
    at 8:00 a village with more than 20 food per villager plus `tradeAmount` sends one
    villager (a Merchant first) with a pile of `tradeAmount` food (split off its storage) on
