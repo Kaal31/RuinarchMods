@@ -466,8 +466,7 @@ knowledge).
    is announced. Saved in `ModData/ruinarch.plus.records.json`
    (`kind|holderId|carrierIds|structureIds`). The panel's faction line adds "(written in 3
    homes and the Library of Andorlad)". Books never fill a building's last two free tiles.
-   *(first version with Books and instant writing verified in game; the shelves and actions
-   are not yet verified)*
+   *(verified in game, shipped in 0.9.0: RecordsSuite 21/0 and a full harness run 141/0)*
 
 *Dependency:* population + food + war together drive Phase 5 settlement growth.
 
