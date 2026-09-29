@@ -603,13 +603,28 @@ knowledge).
 
 Military systems, plus curfews/borders from Phase 2.
 
-**What EXISTS:** a warfare mechanic, but short-lived (partly because populations are tiny,
-which Phases 4 and 5 fix at the root).
+**What EXISTS (cited against `RuinarchRE`):** standing fighters already: a village wants
+N - ceil(3N/8) combatants among N villagers (`SettlementClassComponent.GetNumberOfNeededCombatants`,
+line 500, about 62 percent) and posts "Combatant" change-class jobs when short; Barracks are
+a village facility (weight 20, cap 1; capitals 2) where combatants train Martial Arts by
+chance. Morning patrols (`MorningPatrolPartyQuest`, one per faction). A night patrol quest
+and behaviour that the game never creates (debug console only). War: `Declare_War`,
+raids by Warmonger factions at war (`SettlementPartyComponent.TryCreateRaidQuest`). The
+warfare is short-lived, partly because populations are tiny (Phases 4 and 5).
 
 **What's NEW:**
-- **Training grounds [M]** in Town+ settlements produce local standing armies (melee/archer/...).
-- **Patrols & levies [L]:** locals patrol and kill threats; a nation at war can call them
-  up; they march off-region, and win/lose/die (feeding Phase 4 population).
+- **Training grounds [M]:** dropped: the game already keeps most of a village as fighters
+  and trains them at its Barracks.
+- **Night watch: shipped** (`Phase6/NightWatch.cs`, config `nightWatchEnabled`, spec
+  `docs/specs/2026-09-29-night-watch-design.md`). A Town or City (capitals included) with 4+
+  fighters keeps one guard per 8 residents (1 to 3): combatants, never the ruler or faction
+  leader, nobody in an active party, best Martial Arts first. A postfix on
+  `DailyScheduleComponent.UpdateDailySchedule` gives guards the game's `NocturnalSchedule`;
+  hourly, a guard at home in their work hours (22:00 to 9:00) gets the game's
+  `NightPatrolBehaviour` (aggressive patrol of village structures), removed outside them.
+  Saved in `ModData/ruinarch.plus.watch.json`. *(verification pending)*
+- **Levies [L]:** a nation at war calls fighters up; they march off-region, and
+  win/lose/die (feeding Phase 4 population).
 - **Curfews & closed borders [M]:** the settlement-curfew from Phase 2 escalates to
   kingdom-level border closure during war/plague.
 - **Diplomacy [L]:** alliances, territory trade, war declarations the player can scheme into.

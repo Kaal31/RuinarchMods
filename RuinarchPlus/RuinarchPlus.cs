@@ -34,6 +34,7 @@ namespace RuinarchPlus
 			Phase4.LifeCycle.Register();
 			Phase4.Records.Register();
 			Phase3.MissingPersons.Register();
+			Phase6.NightWatch.Register();
 
 			var patched = Harmony.GetAllPatchedMethods()
 				.Select(m => (m.DeclaringType != null ? m.DeclaringType.Name : "?") + "." + m.Name)

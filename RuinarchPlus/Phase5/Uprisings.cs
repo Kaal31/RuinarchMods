@@ -455,8 +455,10 @@ namespace RuinarchPlus.Phase5
 		private static void Jail(NPCSettlement s, Character taker, Uprising u)
 		{
 			Character ruler = u.Ruler;
-			ruler.traitContainer.AddTrait(ruler, "Restrained", taker);
+			// Held first: tying them up makes every villager in sight react at once (an untie
+			// job planned before the hold is known would still run).
 			HeldRulers[ruler] = new Held { Village = s, Since = Now, Delivered = ruler.currentStructure == s.prison };
+			ruler.traitContainer.AddTrait(ruler, "Restrained", taker);
 			if (!HeldRulers[ruler].Delivered)
 			{
 				Character carrier = new[] { taker }.Concat(u.Rebels).FirstOrDefault(c => c != ruler && !Down(c));
@@ -487,9 +489,18 @@ namespace RuinarchPlus.Phase5
 				Character c = kv.Key;
 				Held h = kv.Value;
 				NPCSettlement s = h.Village;
-				if (c == null || c.isDead || s == null || c.faction != s.owner)
+				if (c == null || c.isDead || s == null)
 				{
 					HeldRulers.Remove(c);
+					continue;
+				}
+				// No longer of the faction (the game's own: a new leader's ideology can leave them
+				// "not fit"): the village has no claim on them, so they are let go.
+				if (c.faction != s.owner)
+				{
+					HeldRulers.Remove(c);
+					c.traitContainer.RemoveTrait(c, "Restrained");
+					Phase2.Curfew.Note("{0}, once ruler of {1}, is no longer of its faction and is let go.", c, s);
 					continue;
 				}
 				if (!c.traitContainer.HasTrait("Restrained"))
@@ -675,6 +686,30 @@ namespace RuinarchPlus.Phase5
 			catch (Exception e)
 			{
 				RuinarchPlus.Log?.Warning("Uprisings keep-tied (action) failed: " + e.Message);
+			}
+		}
+	}
+
+	// The untie action checks its requirements only when planned; one planned before the
+	// hold (or by a friend who fell out) is stopped when it would start.
+	[HarmonyPatch(typeof(RemoveRestrained), nameof(RemoveRestrained.IsInvalid))]
+	internal static class Uprisings_KeepHeldTied_Invalid
+	{
+		private static void Postfix(ActualGoapNode node, GoapActionInvalidity __result)
+		{
+			try
+			{
+				if (__result != null && !__result.isInvalid && node?.poiTarget is Character held && Uprisings.IsHeld(held)
+					&& node.actor != null && !node.actor.relationshipContainer.IsFriendsWith(held))
+				{
+					__result.isInvalid = true;
+					__result.reason = "held_by_the_village";
+					__result.shouldLogInvalidity = false;
+				}
+			}
+			catch (Exception e)
+			{
+				RuinarchPlus.Log?.Warning("Uprisings keep-tied (invalid) failed: " + e.Message);
 			}
 		}
 	}

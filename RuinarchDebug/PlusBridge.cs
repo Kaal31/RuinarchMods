@@ -195,6 +195,16 @@ namespace RuinarchDebug
 		/// <summary>Ruinarch+'s clock (game ticks), the one its timers count in.</summary>
 		internal static long PlusNow => UnrestType?.GetProperty("Now", Any)?.GetValue(null) is long t ? t : 0L;
 
+		private static Type WatchType => Plus?.GetType("RuinarchPlus.Phase6.NightWatch");
+
+		internal static bool WatchAvailable => WatchType != null;
+
+		/// <summary>The night watch guards of <paramref name="village"/>.</summary>
+		internal static List<Character> GuardsOf(NPCSettlement village) => WatchType?.GetMethod("GuardsOf", Any)?.Invoke(null, new object[] { village }) as List<Character> ?? new List<Character>();
+
+		/// <summary>Run the night watch's hourly check now.</summary>
+		internal static void WatchCheck() => WatchType?.GetMethod("Check", Any)?.Invoke(null, null);
+
 		/// <summary>Whether <paramref name="village"/> counts as hungry (sends hunters).</summary>
 		internal static bool IsHungry(NPCSettlement village)
 		{

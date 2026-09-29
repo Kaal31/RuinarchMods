@@ -75,7 +75,12 @@ namespace RuinarchPlus.Phase5
 				}
 				Out.Remove(hunter);
 				SetOut.Remove(hunter);
-				if (!Fed.Remove(hunter))
+				if (hunter != null && hunter.isDead)
+				{
+					Fed.Remove(hunter);
+					RuinarchPlus.Log?.Info($"{hunter.name} died while hunting ({prey?.name} {(prey == null || !prey.hasMarker ? "gone" : prey.isDead ? "dead" : "alive")}).");
+				}
+				else if (!Fed.Remove(hunter))
 				{
 					RuinarchPlus.Log?.Info($"{hunter?.name} came back from hunting empty-handed ({prey?.name} {(prey == null || !prey.hasMarker ? "gone" : prey.isDead ? "dead" : "alive")}).");
 				}

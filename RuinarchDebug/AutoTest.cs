@@ -269,6 +269,7 @@ namespace RuinarchDebug
 			// Kills a villager, wrecks a building and sets the village against its ruler twice.
 			if (Runs("UnrestSuite")) { yield return Safe("UnrestSuite", UnrestSuite()); }
 			if (Runs("UprisingKindsSuite")) { yield return Safe("UprisingKindsSuite", UprisingKindsSuite()); }
+			if (Runs("WatchSuite")) { yield return Safe("WatchSuite", WatchSuite()); }
 			if (Runs("HuntSuite")) { yield return Safe("HuntSuite", HuntSuite()); }
 			if (Runs("TradeSuite")) { yield return Safe("TradeSuite", TradeSuite()); }
 			// After the burial and knowledge tests: a plague answered with Exile makes the
@@ -1339,10 +1340,11 @@ namespace RuinarchDebug
 				UnityEngine.UI.ScrollRect list = AccessTools.Field(typeof(StructureInfoUI), "charactersScrollView").GetValue(sui) as UnityEngine.UI.ScrollRect;
 				return list == null ? -1 : list.content.GetComponentsInChildren<CharacterPortrait>().Length;
 			};
+			// Counted together: people settle in while the screenshot is taken.
+			int alive = village.residents.Count(c => c != null && !c.isDead);
 			int villageShown = Guard("open the center's Residents tab", () => (object)residentsShown(village.cityCenter)) as int? ?? -1;
 			yield return new WaitForSecondsRealtime(1f);
 			yield return Screenshot("residents.png");
-			int alive = village.residents.Count(c => c != null && !c.isDead);
 			LocationStructure dwelling = village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> homes) ? homes.FirstOrDefault(h => h.residents.Count > 0) : null;
 			int houseShown = dwelling == null ? -1 : Guard("open a dwelling's Residents tab", () => (object)residentsShown(dwelling)) as int? ?? -1;
 			Guard("close the building panel", () => { UIManager.Instance.structureInfoUI.CloseMenu(); return village; });
@@ -1820,7 +1822,7 @@ namespace RuinarchDebug
 					});
 					bool rose2 = PlusBridge.HasUprising(village);
 					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(village));
-					Check("a ruler who knocks the rebels out keeps the rule", () =>
+					CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
 						(rose2 && village.ruler == newRuler && (ModsLogHas($"{newRuler.name} has put down the uprising in {village.name}") || ModsLogHas($"The uprising in {village.name} has failed"))
 							&& newRuler.relationshipContainer.HasGrudgeAgainst(rebel),
 						$"rose={rose2} ruler={village.ruler?.name} (was {newRuler.name}); challenger {rebel.name} unconscious={rebel.traitContainer.HasTrait("Unconscious")} grudge={newRuler.relationshipContainer.HasGrudgeAgainst(rebel)}"));
@@ -2035,6 +2037,10 @@ namespace RuinarchDebug
 					{
 						Skip(jailCheck, "a friend freed them: " + detail);
 					}
+					else if (overthrown && !stillHeld && ModsLogHasSince(jailMark, $"{old.name}, once ruler of {jv.name}, is no longer of its faction and is let go."))
+					{
+						Skip(jailCheck, $"the game took them out of the faction (now {old.faction?.name ?? "none"}): " + detail);
+					}
 					else Check(jailCheck, () => (overthrown && delivered && stillHeld, detail));
 					if (!stillHeld)
 					{
@@ -2220,8 +2226,13 @@ namespace RuinarchDebug
 				(sent > 0, $"{village.name} sent={sent}; fighters: {string.Join(", ", village.residents.Where(fighter).Select(c => $"{c.name} ({c.characterClass.className} marker={c.hasMarker} move={c.limiterComponent.canMove} perform={c.limiterComponent.canPerform} party={c.partyComponent.currentParty?.isActive} carried={c.carryComponent.isBeingCarriedBy != null} hunting={c.jobQueue.HasJob(JOB_TYPE.HUNT_PREY)})"))}"));
 			if (sent > 0)
 			{
+				int huntMark = ModsLogLength();
 				yield return WaitGameHours(16f, () => ModsLogHas($"meat home to {village.name}"));
-				Check("the hunters kill, butcher and carry the meat home", () =>
+				if (!ModsLogHas($"meat home to {village.name}") && ModsLogHasSince(huntMark, "died while hunting") && !ModsLogHasSince(huntMark, "came back from hunting"))
+				{
+					Skip("the hunters kill, butcher and carry the meat home", $"the hunter died on the trip (pig dead={pig.isDead})");
+				}
+				else Check("the hunters kill, butcher and carry the meat home", () =>
 					(ModsLogHas($"meat home to {village.name}"), $"pig dead={pig.isDead} marker={pig.hasMarker} at {pig.gridTileLocation?.localPlace}; still hunting: {string.Join(", ", village.residents.Where(PlusBridge.IsHunting).Select(c => $"{c.name} job={c.currentJob?.jobType}"))}"));
 			}
 		}
@@ -2238,7 +2249,10 @@ namespace RuinarchDebug
 			}
 			List<NPCSettlement> villages = Villages().Where(v => v.owner != null && v.owner.isMajorFaction && v.mainStorage != null && !PlusBridge.IsUnderCurfew(v)).ToList();
 			NPCSettlement from = null, to = null;
-			foreach (NPCSettlement a in villages)
+			// The sender needs someone able to go (a village of one hurt ruler once sent nobody).
+			Func<NPCSettlement, int> able = v => v.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && !PlusBridge.IsChild(r)
+				&& r.hasMarker && r.limiterComponent.canMove && r.limiterComponent.canPerform);
+			foreach (NPCSettlement a in villages.Where(v => able(v) >= 2).OrderByDescending(able))
 			{
 				// Prefer a partner of another faction (the news check needs one).
 				to = villages.Where(b => b != a && (b.owner == a.owner || !a.owner.IsHostileWith(b.owner))).OrderBy(b => b.owner == a.owner).FirstOrDefault();
@@ -3719,6 +3733,11 @@ namespace RuinarchDebug
 			}
 			else
 			{
+				// A creature can already be in the new Kennel (a wild Pig once was): empty it first.
+				if (kennel.occupyingSummon != null)
+				{
+					Guard("empty the Kennel", () => { Summon o = kennel.occupyingSummon; o.Death("autotest"); return o; });
+				}
 				Summon monster = Guard("drop a monster into the Kennel", () =>
 				{
 					Summon s = CharacterManager.Instance.CreateNewSummon(SUMMON_TYPE.Wolf, null, homeLocation: null,
@@ -3936,7 +3955,8 @@ namespace RuinarchDebug
 				yield return WaitGameHours(3f, () => PlusBridge.Knows(listeners, portal));
 				Check("news heard from another faction makes the listener's faction aware", () =>
 					(PlusBridge.Knows(listeners, portal) && listeners.isAwareOfPlayer,
-					$"{listeners.name} knows={PlusBridge.Knows(listeners, portal)} aware={listeners.isAwareOfPlayer}"));
+					$"{listeners.name} knows={PlusBridge.Knows(listeners, portal)} aware={listeners.isAwareOfPlayer}; {listener.name}: dead={listener.isDead} faction={listener.faction?.name ?? "none"} "
+					+ $"home={listener.homeSettlement?.name ?? "none"} in={listener.currentSettlement?.name ?? "the wild"} at {listener.gridTileLocation?.localPlace} carries={PlusBridge.Carries(listener, portal)} remembers={PlusBridge.Remembers(listener, portal)} knowledge={PlusBridge.Config("knowledgeEnabled")}"));
 			}
 			PlusBridge.SetConfig("gossipChance", 25);
 			foreach (Faction f in new[] { tellers, listeners })
@@ -3996,6 +4016,20 @@ namespace RuinarchDebug
 		// and read them through two real actions (an hour at the shelf, a line in its Logs tab).
 		// The faction is never made aware of the player (no counterattacks), and it forgets
 		// everything taught here at the end.
+		// Check <paramref name="name"/> unless <paramref name="who"/>, whom it measures, died
+		// first (killed by the world: a monster, a disease, the Portal's defenders); then skip.
+		private void CheckAlive(Character who, string name, Func<(bool ok, string detail)> check)
+		{
+			if (who != null && who.isDead)
+			{
+				Skip(name, $"{who.name} died before it could be measured ({who.causeOfDeath})");
+			}
+			else
+			{
+				Check(name, check);
+			}
+		}
+
 		private IEnumerator RecordsSuite()
 		{
 			if (!PlusBridge.RecordsAvailable || !(PlusBridge.Config("recordsEnabled") is bool on) || !on)
@@ -4083,14 +4117,14 @@ namespace RuinarchDebug
 				});
 				yield return WaitGameHours(0.1f, null);
 			}
-			Check("a villager given a Write job walks to the record and writes it down", () =>
+			CheckAlive(writer, "a villager given a Write job walks to the record and writes it down", () =>
 				(PlusBridge.RecordOf(house)?.Contains(portal) == true && sawWriting != null && LogsOf(carrier, wrote).Count > 0
 					&& ModsLogHasSince(mark, $"A household in {village.name} started keeping a record"),
 				$"record={record(house)} writing seen: {sawWriting?.name ?? "nobody"} carrier {describeCarrier(carrier)}; writer {writer.name} in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
-			Check("a writing villager's thought bubble says what they are doing", () =>
+			CheckAlive(writer, "a writing villager's thought bubble says what they are doing", () =>
 				(bubbles.Count > 0 && bubbles.All(b => b == "Going to write." || b == "Writing."), $"bubbles=[{string.Join(" | ", bubbles)}]"));
 			List<string> panel = PlusBridge.KnowledgePanelLines() ?? new List<string>();
-			Check("the bookmarks panel says where a faction keeps records", () =>
+			CheckAlive(writer, "the bookmarks panel says where a faction keeps records", () =>
 				(panel.Any(l => l.Contains(faction.name) && l.Contains("(written in ") && l.Contains("home")), string.Join(" / ", panel)));
 
 			// 2. The game saves while a villager is writing: the save completes and the writing
@@ -4230,7 +4264,7 @@ namespace RuinarchDebug
 				yield return GiveRecordJob(writer, true, libCarrier, null);
 				yield return WaitGameHours(8f, () => PlusBridge.RecordOf(library)?.Contains(portal) == true);
 				yield return WaitGameHours(0.1f, null);
-				Check("a villager writes in the Library", () =>
+				CheckAlive(writer, "a villager writes in the Library", () =>
 					(PlusBridge.RecordOf(library)?.Contains(portal) == true && LogsOf(libCarrier, wrote).Count > 0,
 					$"record={record(library)} carrier {describeCarrier(libCarrier)}; writer in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
 				Guard("leave only the Library's record, and nobody who remembers", () =>
@@ -4397,6 +4431,109 @@ namespace RuinarchDebug
 			bool taken = c.currentActionNode?.goapType == action
 				|| c.jobQueue.jobsInQueue.OfType<GoapPlanJob>().Any(j => j.targetInteractionType == action && j.targetPOI == carrier);
 			Log($"  {c.name}: {what} job at {carrier.name} {(taken ? "taken" : "REFUSED")} (canPerform={c.limiterComponent.canPerform}, doing {c.currentActionNode?.goapName ?? "nothing"})");
+		}
+
+		// Phase 6: the night watch. A Town or City (capitals count) with 4+ fighters names
+		// guards on the night schedule; at night they patrol the village and fight what they see.
+		private IEnumerator WatchSuite()
+		{
+			if (!PlusBridge.Available || !PlusBridge.WatchAvailable)
+			{
+				Skip("night watch", "RuinarchPlus (with the night watch) not loaded");
+				yield break;
+			}
+			PlusBridge.SetConfig("nightWatchEnabled", true);
+			Func<NPCSettlement, int> fighters = v => v.residents.Count(c => c != null && !c.isDead && c.isNormalCharacter && c.faction == v.owner && c.characterClass != null && c.characterClass.IsCombatant());
+			// Who can stand guard: a fighter at home in the faction, not the ruler or leader, not
+			// away with a party, not held (the rest may all be busy; then nothing to measure).
+			Func<NPCSettlement, int> free = v => v.residents.Count(c => c != null && !c.isDead && c.isNormalCharacter && c.faction == v.owner && c.homeSettlement == v
+				&& c.characterClass != null && c.characterClass.IsCombatant() && c != v.ruler && !c.isFactionLeader && !PlusBridge.IsChild(c)
+				&& !c.traitContainer.HasTrait("Restrained") && !(c.partyComponent.hasParty && c.partyComponent.currentParty.isActive));
+			NPCSettlement village = Villages().Where(v => v.owner != null && v.owner.isMajorNonPlayer && v.cityCenter != null && PlusBridge.Tier(v) != "Village" && fighters(v) >= 4 && free(v) > 0)
+				.OrderByDescending(free).FirstOrDefault();
+			if (village == null)
+			{
+				Skip("night watch", "no Town or City with 4+ fighters and one free to guard: " + string.Join("; ", Villages().Select(v => $"{v.name} {PlusBridge.Tier(v)} fighters={fighters(v)} free={free(v)}")));
+				yield break;
+			}
+			Try("run the night watch check", PlusBridge.WatchCheck);
+			List<Character> guards = PlusBridge.GuardsOf(village);
+			Log($"night watch village: {Describe(village)} tier={PlusBridge.Tier(village)} fighters={fighters(village)} guards=[{string.Join(", ", guards.Select(g => g.name))}]");
+
+			// 1. Guards: fighters, never the ruler or the faction leader, and announced.
+			Check("a Town or City sets a night watch of its fighters", () =>
+				(guards.Count > 0 && guards.All(g => g.characterClass.IsCombatant() && g != village.ruler && !g.isFactionLeader) && ModsLogHas($"{village.name} has set a night watch"),
+				$"guards=[{string.Join(", ", guards.Select(g => $"{g.name} ({g.characterClass.className})"))}] ruler={village.ruler?.name}"));
+			if (guards.Count == 0)
+			{
+				yield break;
+			}
+
+			// 2. Guards sleep by day.
+			Character other = village.residents.FirstOrDefault(c => c != null && !c.isDead && c.isNormalCharacter && !guards.Contains(c) && !c.partyComponent.hasParty && !c.traitContainer.HasTrait("Nocturnal"));
+			Check("guards keep the night schedule, other villagers do not", () =>
+				(guards.All(g => g.partyComponent.hasParty || g.dailyScheduleComponent.schedule is NocturnalSchedule) && (other == null || !(other.dailyScheduleComponent.schedule is NocturnalSchedule)),
+				$"guards: {string.Join(", ", guards.Select(g => $"{g.name}={g.dailyScheduleComponent.schedule?.GetType().Name}"))}; {other?.name ?? "nobody"}={other?.dailyScheduleComponent.schedule?.GetType().Name}"));
+
+			// 3. At night, at home, they patrol, aggressive.
+			Func<int> hour = () => GameManager.Instance.Today().tick / GameManager.ticksPerHour;
+			yield return WaitGameHours(24f, () => hour() == 23);
+			BringResidentsHome(village);
+			Try("run the night watch check", PlusBridge.WatchCheck);
+			yield return WaitGameHours(1f, null);
+			guards = PlusBridge.GuardsOf(village);
+			Func<Character, bool> patrolling = g => g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour)) && g.combatComponent.combatMode == COMBAT_MODE.Aggressive;
+			Check("at night the guards walk the village, ready to fight", () =>
+				(guards.Any(patrolling), string.Join(", ", guards.Select(g => $"{g.name}: patrol behaviour={g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour))} mode={g.combatComponent.combatMode} "
+					+ $"job={g.currentJob?.jobType.ToString() ?? "none"} doing={g.currentActionNode?.goapName ?? "nothing"} in={g.currentSettlement?.name ?? "the wild"} schedule={g.dailyScheduleComponent.schedule.GetScheduleType(GameManager.Instance.Today().tick)}"))));
+
+			// 4. A wolf in the village at night is fought.
+			Character guard = guards.FirstOrDefault(patrolling) ?? guards.FirstOrDefault();
+			List<LocationGridTile> around = new List<LocationGridTile>();
+			guard?.gridTileLocation?.PopulateTilesInRadius(around, 4, includeCenterTile: false, includeTilesInDifferentStructure: true);
+			LocationGridTile near = around.FirstOrDefault(t => !t.isOccupied && t.IsPartOfSettlement(village));
+			if (guard == null || near == null)
+			{
+				Skip("a guard fights a wolf in the village at night", guard == null ? "no guard" : "no free tile near the guard");
+			}
+			else
+			{
+				Summon wolf = Guard("put a wolf in the village", () =>
+				{
+					Summon s = CharacterManager.Instance.CreateNewSummon(SUMMON_TYPE.Wolf, FactionManager.Instance.wildMonsterFaction, homeLocation: null,
+						homeRegion: GridMap.Instance.mainRegion, homeStructure: null, className: "", bypassIdeologyChecking: true);
+					s.CreateMarker();
+					s.InitialCharacterPlacement(near);
+					s.marker.UpdatePosition();
+					return s;
+				});
+				bool fought = false;
+				yield return WaitGameHours(2f, () => fought = wolf == null || wolf.isDead || guards.Any(g => g.combatComponent.hostilesInRange.Contains(wolf)));
+				Check("a guard fights a wolf in the village at night", () =>
+					(wolf != null && fought, $"wolf dead={wolf?.isDead} faction={wolf?.faction?.name}; guards fighting it: {string.Join(", ", guards.Where(g => wolf != null && g.combatComponent.hostilesInRange.Contains(wolf)).Select(g => g.name))}"));
+				Guard("remove the wolf", () => { if (wolf != null && !wolf.isDead) { wolf.Death("autotest"); } return wolf; });
+			}
+
+			// 5. Kept in the save file.
+			string saved = null;
+			yield return SaveAndRead("ruinarch.plus.watch.json", (j, e) => saved = j);
+			List<Character> before = PlusBridge.GuardsOf(village);
+			if (saved != null)
+			{
+				ReplayLoad("ruinarch.plus.watch.json", saved);
+			}
+			Check("the night watch is stored in the save file and comes back", () =>
+				(saved != null && before.All(g => saved.Contains(g.persistentID)) && PlusBridge.GuardsOf(village).Count == before.Count,
+				$"saved={(saved == null ? "none" : saved.Length + " bytes")} guards before={before.Count} after load={PlusBridge.GuardsOf(village).Count}"));
+
+			// 6. Switched off: guards go back to the usual schedule and stop patrolling.
+			List<Character> was = PlusBridge.GuardsOf(village);
+			PlusBridge.SetConfig("nightWatchEnabled", false);
+			Try("run the night watch check", PlusBridge.WatchCheck);
+			Check("switched off, the guards are released", () =>
+				(PlusBridge.GuardsOf(village).Count == 0 && was.All(g => g.isDead || (!(g.dailyScheduleComponent.schedule is NocturnalSchedule) || g.traitContainer.HasTrait("Nocturnal")) && !g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour))),
+				string.Join(", ", was.Select(g => $"{g.name}: schedule={g.dailyScheduleComponent.schedule?.GetType().Name} patrol={g.behaviourComponent.HasBehaviour(typeof(NightPatrolBehaviour))}"))));
+			PlusBridge.SetConfig("nightWatchEnabled", true);
 		}
 
 		// Phase 3: a resident none of their people has seen for a while is reported missing,

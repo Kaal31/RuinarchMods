@@ -5,8 +5,9 @@ A bug-fix and gameplay mod for **Ruinarch**, built on the
 against the decompiled game source.
 
 It follows the [Ruinarch+ roadmap](RuinarchPlus-DESIGN.md). Shipped so far: the Phase 1
-bug fixes, and the first features of Phases 2 to 5 (death and decay, knowledge, gossip and
-records, migration, growing settlements, famine, hunting and trade). These change the game by default; each one can be switched off in
+bug fixes, and the first features of Phases 2 to 6 (death and decay, knowledge, gossip and
+records, migration, growing settlements, famine, unrest and uprisings, hunting and trade, a
+night watch). These change the game by default; each one can be switched off in
 `config.json`.
 
 ## What it fixes
@@ -67,6 +68,12 @@ records, migration, growing settlements, famine, hunting and trade). These chang
 | **Unrest and uprisings** | Villages hold their troubles against their ruler: famine, plague, attacks on the village, deaths (not of old age), the dead left unburied, homelessness, criminals walking free, buildings lost, and a ruler most of them dislike. Unrest builds up while any of these last and fades when none do. A restless village says what it blames the ruler for (announced), and every villager thinks a little less of the ruler each day. When it boils over the village rises (at night, once those against the ruler are awake): the villager who thinks least of the ruler leads everyone who dislikes them against the ruler and those who stand by them. How it goes depends on the people: most often a **brawl** (the game's own knockout fights, nobody is killed): knock the ruler out and the leader takes the rule of the village, and of the faction if the ruler led it; knock the rebels out, or hold for half a day, and the ruler stays. A leader who is Evil, a Psychopath, Ruthless or Treacherous (or holds a grudge) may instead **plot an assassination**: they wait for the ruler to fall asleep, stay up and strike; unseen, they take the rule; seen, they are a murderer and wanted, and someone else rules; a ruler who wakes may well kill them. A village with a prison may **jail its ruler**: after the brawl the rebels carry them there, the village leaves them tied (only a friend may free them), and after two days whoever rules executes, exiles or releases them, by what they think of them. A big village (12 or more adults, four or more on each side) may fall into **civil war**: the two sides fight to the death and the losing side's survivors are exiled. After any uprising the village is calm for a day. Switch off with `unrestEnabled`; `uprisingKindsEnabled` false keeps only the brawl. |
 | **Hunters** | A hungry village (in famine, or a fifth of its people starving) sends up to two of its fighters, Hunters first, after wild animals nearby every six hours. They kill and butcher the animal and carry the meat to the village storage (nobody carries a hunter's kill off to the Mass Grave); prey that runs off is chased for up to a day. Bears are left alone. |
 | **Traders** | Once a day a village with food to spare sends a trader (a Merchant if it has one) with 40 food to the village that needs it most; the trader walks there and puts it in that village's storage (called away on the road, they pick the food up again later). Never between enemies, and not to or from a village under curfew. Traders also carry news of your buildings both ways: arriving, they tell their hosts everything their faction knows of you, and take home what their hosts know. |
+
+## Phase 6: War & Diplomacy (in progress)
+
+| Feature | What you'll notice |
+|---------|--------------------|
+| **Night watch** | The game watches its villages by day (the morning patrol) but never at night. Now a Town or City (or a capital) with at least four fighters keeps a night watch: one guard for every eight residents, up to three, its best fighters, never the ruler. Guards sleep by day and at night walk the village ready to fight, so a monster or a demon that slips in after dark meets someone awake. A guard who dies, leaves or is needed elsewhere is replaced. Switch off with `nightWatchEnabled`. |
 
 ## Optional QOL (config)
 
@@ -149,6 +156,7 @@ your `Mods/RuinarchPlus/` folder:
 | `huntersPerTrip` | `2` | Most villagers a village sends hunting at once (every 6 hours). |
 | `tradeEnabled` | `true` | Villages with food to spare send traders to villages that need it. |
 | `tradeAmount` | `40` | Food one trader carries. |
+| `nightWatchEnabled` | `true` | Towns and Cities keep a night watch of their fighters. Set `false` for none. |
 | `corpseDiseaseEnabled` | `true` | Rotting corpses in a settlement spread plague to nearby villagers. Requires `corpseDecayEnabled`. |
 | `corpseDiseaseChancePerCorpse` | `3` | Percent infection chance, per rotting corpse, per in-game hour, per nearby villager. |
 

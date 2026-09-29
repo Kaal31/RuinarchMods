@@ -112,6 +112,9 @@ namespace RuinarchPlus
 		// news of the demons' buildings both ways.
 		public bool tradeEnabled = true;
 		public int tradeAmount = 40;
+		// Night watch (Phase 6): a Town or City with 4+ fighters keeps one guard per 8 residents
+		// (1 to 3) on the night schedule; at night they walk the village and attack hostiles.
+		public bool nightWatchEnabled = true;
 
 		// Life cycle (Phase 4): a year is lifeDaysPerYear in-game days. Villagers age; a woman
 		// and her lover of the same race and village may have a child (birthChancePerDay
