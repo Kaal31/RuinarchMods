@@ -1,6 +1,7 @@
 # Other ways a ruler falls (Ruinarch+, Phase 5)
 
-Status: design approved in chat (2026-09-29), not built. Plan:
+Status: design approved in chat (2026-09-29), not built; jailing amended the same day
+(approved in chat) after the crime system proved unable to charge a ruler. Plan:
 `docs/plans/2026-09-29-ruler-falls.md`.
 
 ## Goal
@@ -10,7 +11,7 @@ least of the ruler leads everyone who dislikes them against the ruler and those 
 them, in the game's non-lethal brawl; the ruler knocked out, the leader takes the rule. The
 roadmap (`RuinarchPlus-DESIGN.md`, Phase 5, "Next for unrest") asks for other outcomes,
 depending on the village and the people involved. This adds three: an **assassination**
-plot, the ruler **jailed** for treason, and a lethal **civil war** whose losers are exiled.
+plot, the ruler **jailed** by the new ruler, and a lethal **civil war** whose losers are exiled.
 Which one happens is a weighted roll the people shape.
 
 ## Base game (cited against RuinarchRE)
@@ -29,19 +30,20 @@ Which one happens is a weighted roll the people shape.
   A faction leader always rules their home village
   (`Faction.ProcessFactionLeaderAsSettlementRuler`), which `Unrest.TakeRule` already
   handles.
-- Crimes: `CrimeComponent.AddCrime(CRIME_TYPE, CRIME_SEVERITY, ICrimeable, criminal, target,
-  targetFaction, REACTION_STATUS)` (`CrimeComponent.cs:258`) and
-  `CrimeData.AddFactionThatConsidersWanted(Faction)` (`CrimeData.cs:291`) make a character
-  wanted. `CRIME_TYPE.Treason` exists (`Crime_System/Treason.cs`) and nothing in the game
-  uses it.
-- Arrest: `SettlementJobTriggerComponent.CreateApprehendJob(JOB_TYPE, Character)`
-  (`SettlementJobTriggerComponent.cs:428`) posts a settlement `APPREHEND` job ending in
-  `DROP_RESTRAINED` at `NPCSettlement.prison`; the game's own trigger
-  (`TryCreateApprehend`, line 420) asks for the Criminal trait and being wanted by the
-  village's faction. Being jailed does not take the rule from anyone.
-- Judging: the faction leader holds the `JUDGE_PRISONER` job (`Faction.cs:378-386`);
-  `JudgeCharacter` (`JudgeCharacter.cs:204-278`) absolves, executes, exiles, whips or burns
-  at the stake.
+- Crimes cannot charge the old ruler cleanly, so jailing does not use them:
+  `CrimeManager.ReactToCrime` does nothing when the actor is their faction's ruler or leader
+  ("actor_leader_do_nothing"); every `CrimeData` keeps the `ICrimeable` (an action or
+  interrupt) behind it and dereferences it unchecked (`CrimeData.cs:481, 510, 523`), and a
+  crime without one is not saved (`SaveDataCrimeComponent.cs:30`); `CRIME_TYPE.Treason`
+  exists (`Crime_System/Treason.cs`) but no action produces it. The game's own framing
+  (`FabricateCrimeData`) charges a random serious crime spread by gossip.
+- Judging needs a crime: `SettlementJobTriggerComponent.TryCreateJudgePrisoner`
+  (line 405) only judges a Restrained Criminal in the prison who is wanted.
+- Carrying to prison: `INTERACTION_TYPE.DROP_RESTRAINED` (`DropRestrained.cs:152
+  AfterDropSuccess`) carries a Restrained character and puts them down at the structure in
+  its other data (the settlement's `APPREHEND` job passes `NPCSettlement.prison`); it needs
+  no crime. Friends of a Restrained prisoner who is not their own faction's may free them
+  (`ReactionComponent.cs:1380`, `RELEASE_CHARACTER`). Being held takes the rule from nobody.
 - Exile: `Faction.KickOutCharacterAndRollForGrudge(Character, out bool)`
   (`Faction.cs:514`), the game's own exile (as `Exile.AfterExileSuccess` does): leaves the
   faction, rolls grudges by mood; the character goes to the vagrant faction.
@@ -93,16 +95,32 @@ Announced: "{leader} is plotting against {ruler} in {village}." Each hour:
 
 **Jailing.** Starts as the brawl (same camps, non-lethal). When the ruler is down and the
 rebels win (the brawl's own rule for who takes the rule):
-1. the ruler is charged: `AddCrime(CRIME_TYPE.Treason, CRIME_SEVERITY.Serious, null, ruler,
-   ruler, faction, REACTION_STATUS.Witnessed)` and `AddFactionThatConsidersWanted(faction)`;
-2. the taker takes the rule (`TakeRule`);
-3. the village posts the arrest: `settlementJobTriggerComponent.CreateApprehendJob(JOB_TYPE.APPREHEND, ruler)`.
-Announced: "{leader} has taken the rule of {village}; {ruler} is charged with treason and
-taken to the prison." From there the game's own flow decides the ruler's fate (the faction
-leader judges). The loyal camp winning or the 12 hours running out: as the brawl. (Exact
-`CRIME_SEVERITY`/`REACTION_STATUS` values and whether `AddCrime` accepts a null
-`ICrimeable` are checked in the plan's first task; if it does not, the charge uses the
-game's crime flow with the leader as reporter.)
+1. the taker takes the rule (`TakeRule`);
+2. the old ruler is Restrained (`traitContainer.AddTrait(ruler, "Restrained", taker)`) and
+   a standing rebel (the taker first) gets a personal `JOB_TYPE.APPREHEND` job with
+   `DROP_RESTRAINED` to the village's prison (other data: the prison), the game's own carry
+   and drop.
+Announced: "{taker} has taken the rule of {village} and holds {ruler} in the prison."
+The mod keeps who it holds (the old ruler, the village, since when). Each hour:
+- held (Restrained, inside the prison) for 48 hours: the village's ruler now (else the
+  faction leader; else nobody, and they are released) decides by what they think of them:
+  a grudge, or opinion -50 or lower: executed (`Death("executed")` with the ruler as
+  responsible): "{judge} has had {ruler}, once ruler of {village}, executed."; below 0:
+  exiled (Restrained removed, `KickOutCharacterAndRollForGrudge`): "{judge} has exiled
+  {ruler}, once ruler of {village}."; otherwise released (Restrained removed, stays a
+  villager): "{judge} has released {ruler}, once ruler of {village}.";
+- no longer Restrained before that (freed by a friend, or broke loose): "{ruler}, once
+  ruler of {village}, has escaped the prison." and the mod lets go;
+- not in the prison 12 hours after the uprising (nobody could carry them): released where
+  they are, no announcement beyond the overthrow;
+- dead, or left the faction: the mod lets go.
+In the base game any villager who is not hostile and sees a Restrained non-Criminal queues a
+job to untie them (`Restrained.CreateJobsOnEnterVisionBasedOnTrait`, `Restrained.cs:74-104`),
+so a held ruler would be untied at once. A prefix on it returns false for a held ruler
+unless the villager seeing them is their friend (`relationshipContainer.IsFriendsWith`):
+the village leaves them tied, a friend breaks them out.
+The loyal camp winning or the 12 hours running out: as the brawl. The jailing weight needs
+a standing prison (`NPCSettlement.prison`) at the roll.
 
 **Civil war.** The same camps, `Fight(..., isLethal: true)`, re-engaged every hour.
 Announced: "Civil war breaks out in {village}! ({n} rebels against {m} loyal to {ruler})".
@@ -122,8 +140,8 @@ standing who thinks least of the ruler (the brawl's rule).
 
 ## What the player sees
 
-Event log lines above (people and villages as links, through `Curfew.Announce`). Crimes,
-prisoners, judging, exiled vagrants and grudges show in the game's own panels.
+Event log lines above (people and villages as links, through `Curfew.Announce`). Prisoners,
+exiled vagrants and grudges show in the game's own panels.
 
 ## Config
 
@@ -132,14 +150,16 @@ and the Unrest feature row updated; design doc Phase 5 "Next for unrest" becomes
 
 ## Saving
 
-Unchanged: an uprising in progress is not saved (a loaded village rises again at the next
-check). A jailed ruler, the Treason crime, exiles and grudges are the game's own saved state.
+An uprising in progress is not saved (a loaded village rises again at the next check).
+Who the mod holds is saved: a new `held` list in the unrest file
+(`ModData/ruinarch.plus.unrest.json`), one `rulerId|villageId|sinceTick|delivered` each; a
+0.9.0 file without it loads as empty. The Restrained trait, exiles and grudges are the
+game's own saved state.
 
 ## Order of work
 
-1. First, a probe: check `AddCrime` with Treason on a live ruler (null `ICrimeable`,
-   severity, Criminal trait, wanted) in the harness before building on it.
-2. `Uprisings.cs`: move the brawl, add the roll, then assassination, jailing, civil war.
+1. `Uprisings.cs`: move the brawl (UnrestSuite still passes), add the roll.
+2. Assassination, jailing (with its hold, judgement and save), civil war.
 3. Config, README, design doc.
 4. Harness `UprisingKindsSuite`; bridge hooks.
 5. In game: the suite twice, two full regressions; commit after each green step.
@@ -148,7 +168,8 @@ check). A jailed ruler, the Treason crime, exiles and grudges are the game's own
 ## Testing (`UprisingKindsSuite` in `RuinarchDebug/AutoTest.cs`)
 
 Hooks: `Uprisings.ForceNext(village, kind)` (harness only: the next uprising in that village
-is that kind) and `Uprisings.Weights(village, leader, ruler)`.
+is that kind), `Uprisings.Weights(village, leader, ruler)`, `Uprisings.HeldSince(ruler, tick)`
+(harness only: shortens the 48 hours).
 1. Weights: in a live village, a Psychopath leader raises assassination; no Prison gives
    jailing 0; fewer than 12 adults gives civil war 0; `uprisingKindsEnabled` false gives
    brawl only.
@@ -156,18 +177,19 @@ is that kind) and `Uprisings.Weights(village, leader, ruler)`.
    is not wanted, or the leader is wanted for Murder and someone else rules. A failed plot
    is a skip with its reason.
 3. Jailing (forced; the harness builds a Prison if the village has none): the ruler is
-   knocked out, wanted for Treason by their faction, the leader rules, and the ruler ends
-   up Restrained inside the Prison.
+   knocked out, the leader rules, and the ruler ends up Restrained inside the Prison; the
+   hold is stored in the save file and comes back from it; with the hold shortened, the
+   judge's decision matches their opinion (executed, exiled or released).
 4. Civil war (forced in the largest village with 4+ per camp; skipped if none): lethal
    fighting; the winner's side holds the rule; every surviving member of the losing side
    has left the faction.
 5. UnrestSuite unchanged and still passing.
-By hand: a jailed ruler survives a save and load (the harness cannot reload the game's own
-state).
+By hand: a jailed ruler's Restrained trait survives a real save and load (the game's own
+state; the harness can only replay mod data).
 
 ## Out of scope
 
 - The losers founding their own faction or moving to another village (exile only).
-- Treason charges against a failed uprising's leader.
+- Charging anyone with a crime (Treason or other) as part of an uprising.
 - Player schemes that start or steer an uprising.
 - Configurable weights.
