@@ -246,6 +246,7 @@ namespace RuinarchDebug
 			if (Runs("FireWallTest")) { yield return Safe("FireWallTest", FireWallTest()); }
 			if (Runs("PathLineTest")) { yield return Safe("PathLineTest", PathLineTest()); }
 			if (Runs("ExploitSuite")) { yield return Safe("ExploitSuite", ExploitSuite()); }
+			if (Runs("ExplosionTest")) { yield return Safe("ExplosionTest", ExplosionTest()); }
 			// Needs a village with room for a Tavern-sized building; takes the fullest one.
 			// First, while the villages still have free space (later Mass Graves and
 			// Cemeteries fill it).
@@ -638,17 +639,23 @@ namespace RuinarchDebug
 			}
 
 			// A small village can be left with nobody to carry bodies (these tests kill two of its
-			// people, the world may take the rest): then only the fallback takes them, and hauling
-			// measures nothing.
-			if (village.residents.Any(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && r.limiterComponent.canMove && r.limiterComponent.canPerform))
+			// people, the world may take the rest, and the last one may have left to wander the
+			// wilds): then only the fallback takes them, and hauling measures nothing. A carrier
+			// is one of the village's people within reach of it.
+			LocationGridTile centre = village.cityCenter?.tiles.FirstOrDefault();
+			Func<bool> anyCarrier = () => village.residents.Any(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient()
+				&& r.limiterComponent.canMove && r.limiterComponent.canPerform && r.faction == village.owner
+				&& centre != null && r.gridTileLocation != null && r.gridTileLocation.GetDistanceTo(centre) <= 30f);
+			if (anyCarrier())
 			{
-				yield return HaulTests(village, first, pit);
+				yield return HaulTests(village, first, pit, anyCarrier);
 			}
 			else
 			{
+				string left = string.Join(", ", village.residents.Where(r => r != null && !r.isDead).Select(r => $"{r.name} ({r.faction?.name ?? "no faction"}) at {r.gridTileLocation?.localPlace.ToString() ?? "-"}"));
 				foreach (string name in new[] { "pre-existing corpse is laid in the pit once it exists", "villagers carry a creature carcass into the pit", "villagers fetch a carcass from the village's surroundings" })
 				{
-					Skip(name, $"nobody left in {village.name} who can carry a body");
+					Skip(name, $"nobody in or near {village.name} who can carry a body; residents: [{left}]");
 				}
 			}
 
@@ -661,14 +668,20 @@ namespace RuinarchDebug
 		}
 
 		// Villagers take the corpse that lay before the pit existed, a carcass in the village and
-		// one from the surroundings.
-		private IEnumerator HaulTests(NPCSettlement village, Character first, LocationStructure pit)
+		// one from the surroundings. A body still lying there once nobody of the village is left
+		// around to carry it (<paramref name="anyCarrier"/>) measures nothing: skipped.
+		private IEnumerator HaulTests(NPCSettlement village, Character first, LocationStructure pit, Func<bool> anyCarrier)
 		{
+			string nobody = $"nobody in or near {village.name} who can carry a body any more";
 			// The corpse that was lying before the pit existed must be taken too.
 			yield return WaitGameHours(24f, () => first.grave != null || !first.hasMarker);
 			if (first.grave?.gridTileLocation?.structure?.structureType == STRUCTURE_TYPE.CEMETERY)
 			{
 				Skip("pre-existing corpse is laid in the pit once it exists", $"the game built a Cemetery in {village.name} meanwhile and the body was buried there");
+			}
+			else if (first.hasMarker && !anyCarrier())
+			{
+				Skip("pre-existing corpse is laid in the pit once it exists", nobody);
 			}
 			else Check("pre-existing corpse is laid in the pit once it exists", () =>
 			{
@@ -691,7 +704,11 @@ namespace RuinarchDebug
 			else
 			{
 				yield return WaitGameHours(24f, () => !beast.hasMarker);
-				Check("villagers carry a creature carcass into the pit", () =>
+				if (beast.hasMarker && !anyCarrier())
+				{
+					Skip("villagers carry a creature carcass into the pit", nobody);
+				}
+				else Check("villagers carry a creature carcass into the pit", () =>
 					(!beast.hasMarker && PlusBridge.HauledTotal > hauledBeforeCreature,
 					$"hasMarker={beast.hasMarker} hauledDelta={PlusBridge.HauledTotal - hauledBeforeCreature} absorbedDelta={PlusBridge.AbsorbedTotal - absorbedBeforeCreature}"));
 			}
@@ -712,7 +729,11 @@ namespace RuinarchDebug
 				{
 					float d = outside.GetDistanceTo(pit.tiles.First());
 					yield return WaitGameHours(48f, () => !far.hasMarker);
-					Check("villagers fetch a carcass from the village's surroundings", () =>
+					if (far.hasMarker && !anyCarrier())
+					{
+						Skip("villagers fetch a carcass from the village's surroundings", nobody);
+					}
+					else Check("villagers fetch a carcass from the village's surroundings", () =>
 						(!far.hasMarker && PlusBridge.HauledTotal > hauledBeforeOut,
 						$"at {outside.localPlace} ({d:F0} tiles from the pit) hasMarker={far.hasMarker} hauledDelta={PlusBridge.HauledTotal - hauledBeforeOut} jobQueued={village.HasJob(JOB_TYPE.BURY, far)}"));
 				}
@@ -1518,11 +1539,14 @@ namespace RuinarchDebug
 			Func<NPCSettlement, List<Character>> villagers = v => v.residents.Where(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient()).ToList();
 			Func<NPCSettlement, bool> hasRefuge = v => v.owner.ownedSettlements.OfType<NPCSettlement>()
 				.Any(o => o != v && o.locationType == LOCATION_TYPE.VILLAGE && o.GetFirstUnoccupiedStructureOfType(STRUCTURE_TYPE.DWELLING) != null);
-			NPCSettlement village = Villages().Where(v => v.owner != null && v.owner.isMajorFaction && villagers(v).Count >= 4 && !v.isPlagued)
+			// Not a village already hungry or in famine on its own (the world can starve one before
+			// the suite runs): the checks measure a famine this suite causes.
+			NPCSettlement village = Villages().Where(v => v.owner != null && v.owner.isMajorFaction && villagers(v).Count >= 4 && !v.isPlagued
+					&& PlusBridge.InFamine(v) == false && !PlusBridge.IsHungry(v))
 				.OrderByDescending(hasRefuge).FirstOrDefault();
 			if (village == null)
 			{
-				Skip("famine", "no village of a major faction with 4+ villagers: " + string.Join("; ", Villages().Select(Describe)));
+				Skip("famine", "no well-fed, unplagued village of a major faction with 4+ villagers: " + string.Join("; ", Villages().Select(Describe)));
 				yield break;
 			}
 			List<Character> people = villagers(village);
@@ -2052,21 +2076,23 @@ namespace RuinarchDebug
 		{
 			// Prefer someone standing on village tiles (settlement burial path); fall back to
 			// the village border (where the personal outside-village burial path applies).
-			// Party members last: the game has a party bury its own fallen where they lie.
+			// Never a member of an active party: the game has a party bury its own fallen where
+			// they lie (BURY_IN_ACTIVE_PARTY, a wilderness grave), which no burial test is about.
 			// Villagers only: some villages house monsters (a Golem, a Scorpion).
-			Character victim = village.residents.Where(r => r != null && !r.isDead && r.gridTileLocation != null && r.isNormalCharacter && r.race.IsSapient()
-					&& r.gridTileLocation.IsPartOfSettlement(village) && r != village.ruler)
+			Func<Character, bool> able = r => r != null && !r.isDead && r.gridTileLocation != null && r.isNormalCharacter && r.race.IsSapient()
+				&& r != village.ruler && (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive);
+			Character victim = village.residents.Where(r => able(r) && r.gridTileLocation.IsPartOfSettlement(village))
 				.OrderBy(r => r.partyComponent.hasParty).FirstOrDefault()
-				?? village.residents.Where(r => r != null && !r.isDead && r.gridTileLocation != null && r.isNormalCharacter && r.race.IsSapient()
-					&& r.gridTileLocation.IsNextToOrPartOfSettlement(village) && r != village.ruler)
+				?? village.residents.Where(r => able(r) && r.gridTileLocation.IsNextToOrPartOfSettlement(village))
 				.OrderBy(r => r.partyComponent.hasParty).FirstOrDefault();
 			if (victim == null)
 			{
 				return null;
 			}
 			LocationGridTile at = victim.gridTileLocation;
+			string party = victim.partyComponent.hasParty ? $"party {victim.partyComponent.currentParty.partyName} (inactive)" : "no party";
 			victim.Death("autotest");
-			Log($"  killed {victim.name} at {at} (inside village={at.IsPartOfSettlement(village)})");
+			Log($"  killed {victim.name} at {at} (inside village={at.IsPartOfSettlement(village)}, {party})");
 			return victim;
 		}
 
@@ -3487,6 +3513,57 @@ namespace RuinarchDebug
 				offered == null ? "not built" : $"{offered.Count} offered: {string.Join(", ", offered.Select(o => o.bookmarkName))} (bookmarks kept: {kept.Count})"));
 		}
 
+		// A poison explosion set off by the player's side on the Portal: vanilla (the fix
+		// switched off) it damages the Portal, which proves the explosion reaches it; with
+		// the fix the Portal keeps its HP. The Portal is healed and cleaned after each.
+		private IEnumerator ExplosionTest()
+		{
+			const string name = "your side's explosions leave your Portal alone";
+			ThePortal portal = PlayerManager.Instance.player.playerSettlement.allStructures.OfType<ThePortal>().FirstOrDefault(p => !p.hasBeenDestroyed);
+			TileObject core = portal?.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>()
+				.FirstOrDefault(o => o.tileObjectType.IsDemonicStructureTileObject());
+			if (!PlusBridge.Available || core == null)
+			{
+				Skip(name, !PlusBridge.Available ? "RuinarchPlus not loaded" : "no Portal object");
+				yield break;
+			}
+			Character demon = CharacterManager.Instance.allCharacters.FirstOrDefault(c => !c.isDead && c.faction != null && c.faction.isPlayerFaction);
+			object setting = PlusBridge.Config("friendlyExplosionsSpareBuildings");
+			int[] lost = new int[2];
+			for (int i = 0; i < 2; i++)
+			{
+				bool fixOn = i == 1;
+				int before = portal.currentHP;
+				Try($"poison explosion on the Portal (fix {(fixOn ? "on" : "off")})", () =>
+				{
+					PlusBridge.SetConfig("friendlyExplosionsSpareBuildings", fixOn);
+					CombatManager.Instance.PoisonExplosion(core, core.gridTileLocation, 2, demon, 1, demon == null);
+				});
+				yield return WaitGameHours(0.5f, null);
+				lost[i] = before - portal.currentHP;
+				Try("heal and clean the Portal", () =>
+				{
+					foreach (TileObject o in portal.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>().Where(o => o.tileObjectType.IsDemonicStructureTileObject()).Distinct())
+					{
+						o.traitContainer.RemoveStatusAndStacks(o, "Burning");
+						o.traitContainer.RemoveStatusAndStacks(o, "Poisoned");
+						o.AdjustHP(o.maxHP - o.currentHP, ELEMENTAL_TYPE.Normal);
+					}
+					portal.AdjustHP(portal.maxHP - portal.currentHP);
+				});
+			}
+			PlusBridge.SetConfig("friendlyExplosionsSpareBuildings", setting ?? true);
+			string who = demon != null ? $"by {demon.name} ({demon.faction.name})" : "as a player spell";
+			if (lost[0] <= 0)
+			{
+				Skip(name, $"the vanilla explosion {who} did not reach the Portal either (lost {lost[0]})");
+			}
+			else
+			{
+				Check(name, () => (lost[1] == 0, $"explosion {who}: vanilla lost {lost[0]} HP, with the fix {lost[1]}; portal hp now {portal.currentHP}/{portal.maxHP}"));
+			}
+		}
+
 		// Phase 3, the rest of the fog of war.
 		// Next door: a village bordering a demonic building nobody has seen neither becomes
 		// aware nor counterattacks (vanilla does both); once it knows the building, it does.
@@ -3705,25 +3782,30 @@ namespace RuinarchDebug
 			string wrote = $"wrote of your {portal.name}";
 			string read = $"read of your {portal.name}";
 			Func<TileObject, string> describeCarrier = t => t == null ? "none" : $"{t.name} at {t.gridTileLocation?.localPlace}; its logs: [{string.Join(" | ", LogsOf(t, null))}]";
+			// Whoever of the village is writing at a carrier right now. Knowledge spreads at home,
+			// so another member of the household may take up the writing first in their free
+			// time: that is the same action, and it counts.
+			Func<TileObject, Character> writingAt = t => t == null ? null : village.residents.FirstOrDefault(r => r != null && !r.isDead
+				&& r.currentActionNode?.goapType == writeType && r.currentActionNode.poiTarget == t);
 
 			// 1. A Write job at the household's carrier: the villager walks there, writes for an
 			// hour, and the carrier's Logs tab says so; a household without a record starts one.
 			int mark = ModsLogLength();
 			TileObject carrier = Guard("teach the writer and find the household's carrier", () => { PlusBridge.RememberAtHome(writer, portal); return PlusBridge.CarrierFor(house, true); });
-			bool sawWriting = false;
+			Character sawWriting = null;
 			// What the villager's nameplate, panel and tooltip show (CharacterVisuals.GetThoughtBubble),
 			// which throws for an action without thought bubble logs.
 			HashSet<string> bubbles = new HashSet<string>();
 			if (carrier != null)
 			{
 				Log($"  household carrier: {carrier.name} ({PlusBridge.CarriersOf(house).Count} in {house.name})");
-				Guard("give the writer the Write job", () => { SendInto(writer, house); PlusBridge.PlanRecordAction(writer, true, carrier); return writer; });
+				yield return GiveRecordJob(writer, true, carrier, house);
 				yield return WaitGameHours(6f, () =>
 				{
-					if (writer.currentActionNode?.goapType == writeType)
+					if (writingAt(carrier) is Character w)
 					{
-						sawWriting = true;
-						try { bubbles.Add(writer.visuals.GetThoughtBubble() ?? "null"); }
+						sawWriting = w;
+						try { bubbles.Add(w.visuals.GetThoughtBubble() ?? "null"); }
 						catch (Exception e) { bubbles.Add(e.GetType().Name); }
 					}
 					return PlusBridge.RecordOf(house)?.Contains(portal) == true;
@@ -3731,9 +3813,9 @@ namespace RuinarchDebug
 				yield return WaitGameHours(0.1f, null);
 			}
 			Check("a villager given a Write job walks to the record and writes it down", () =>
-				(PlusBridge.RecordOf(house)?.Contains(portal) == true && sawWriting && LogsOf(carrier, wrote).Count > 0
+				(PlusBridge.RecordOf(house)?.Contains(portal) == true && sawWriting != null && LogsOf(carrier, wrote).Count > 0
 					&& ModsLogHasSince(mark, $"A household in {village.name} started keeping a record"),
-				$"record={record(house)} sawWriting={sawWriting} carrier {describeCarrier(carrier)}; writer {writer.name} in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
+				$"record={record(house)} writing seen: {sawWriting?.name ?? "nobody"} carrier {describeCarrier(carrier)}; writer {writer.name} in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
 			Check("a writing villager's thought bubble says what they are doing", () =>
 				(bubbles.Count > 0 && bubbles.All(b => b == "Going to write." || b == "Writing."), $"bubbles=[{string.Join(" | ", bubbles)}]"));
 			List<string> panel = PlusBridge.KnowledgePanelLines() ?? new List<string>();
@@ -3748,14 +3830,16 @@ namespace RuinarchDebug
 				PlusBridge.ForgetRecords(faction);
 				PlusBridge.RememberAtHome(writer, portal);
 				carrier = PlusBridge.CarrierFor(house, true);
-				SendInto(writer, house);
-				PlusBridge.PlanRecordAction(writer, true, carrier);
 				return carrier;
 			});
-			yield return WaitGameHours(4f, () => writer.currentActionNode?.goapType == writeType);
-			if (writer.currentActionNode?.goapType != writeType)
+			yield return GiveRecordJob(writer, true, carrier, house);
+			Character savingWriter = null;
+			yield return WaitGameHours(4f, () => (savingWriter = writingAt(carrier)) != null || PlusBridge.RecordOf(house)?.Contains(portal) == true);
+			if (savingWriter == null)
 			{
-				Skip(savedWriting, $"{writer.name} did not start writing within 4 hours (doing {writer.currentActionNode?.goapName ?? "nothing"})");
+				Skip(savedWriting, PlusBridge.RecordOf(house)?.Contains(portal) == true
+					? "the writing was over before a check saw it"
+					: $"nobody started writing within 4 hours ({writer.name} doing {writer.currentActionNode?.goapName ?? "nothing"})");
 			}
 			else
 			{
@@ -3773,6 +3857,8 @@ namespace RuinarchDebug
 			Func<List<LocationStructure>> writtenHomes = () => (village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>())
 				.Where(d => PlusBridge.RecordOf(d)?.Contains(portal) == true).ToList();
 			yield return WaitGameHours(48f, () => writtenHomes().Count > 0);
+			// mods.log is written a moment after the record changes.
+			yield return WaitGameHours(0.2f, null);
 			Check("in their free time, a villager at home writes what the household's record lacks", () =>
 				(writtenHomes().Count > 0 && ModsLogHasSince(mark, wrote), $"homes with the record: [{string.Join(", ", writtenHomes().Select(d => d.name))}]"));
 
@@ -3789,7 +3875,7 @@ namespace RuinarchDebug
 			TileObject readAt = PlusBridge.CarrierFor(house, false);
 			if (readAt != null)
 			{
-				Guard("give the reader the Read job", () => { SendInto(reader, house); PlusBridge.PlanRecordAction(reader, false, readAt); return reader; });
+				yield return GiveRecordJob(reader, false, readAt, house);
 				yield return WaitGameHours(6f, () => PlusBridge.Remembers(reader, portal));
 				yield return WaitGameHours(0.1f, null);
 			}
@@ -3865,13 +3951,12 @@ namespace RuinarchDebug
 					(PlusBridge.CarriersOf(library).Count > 0, $"carriers=[{string.Join(", ", PlusBridge.CarriersOf(library).Select(t => t.name))}] (libraryBooks={PlusBridge.Config("libraryBooks")})"));
 
 				// 7. A Write job in the Library, then a free-time visit by someone who does not remember.
-				TileObject libCarrier = Guard("send the writer to write in the Library", () =>
+				TileObject libCarrier = Guard("find the Library's carrier to write in", () =>
 				{
 					PlusBridge.RememberAtHome(writer, portal);
-					TileObject t = PlusBridge.CarrierFor(library, true);
-					PlusBridge.PlanRecordAction(writer, true, t);
-					return t;
+					return PlusBridge.CarrierFor(library, true);
 				});
+				yield return GiveRecordJob(writer, true, libCarrier, null);
 				yield return WaitGameHours(8f, () => PlusBridge.RecordOf(library)?.Contains(portal) == true);
 				yield return WaitGameHours(0.1f, null);
 				Check("a villager writes in the Library", () =>
@@ -4009,6 +4094,38 @@ namespace RuinarchDebug
 			{
 				Try($"send {c.name} to {holder.name}", () => CharacterManager.Instance.Teleport(c, spot));
 			}
+		}
+
+		// Give <paramref name="c"/> the Write or Read job at <paramref name="carrier"/> (sent into
+		// <paramref name="sendTo"/> first, if given). A villager who cannot act (asleep: the
+		// game's Resting trait) has a planned job refused by their queue without a word
+		// (JobQueue.IsJobValidForCharacterGivenCurrentState), so wait until they can.
+		private IEnumerator GiveRecordJob(Character c, bool write, TileObject carrier, LocationStructure sendTo)
+		{
+			string what = write ? "Write" : "Read";
+			if (carrier == null || c == null)
+			{
+				Log($"  no {what} job given: carrier={carrier?.name ?? "none"}");
+				yield break;
+			}
+			yield return WaitGameHours(12f, () => c.isDead || c.limiterComponent.canPerform);
+			if (sendTo != null)
+			{
+				SendInto(c, sendTo);
+			}
+			INTERACTION_TYPE action = PlusBridge.RecordAction(write);
+			// A villager held by another job keeps it before ours (a run once saw a writer
+			// stay on one Go To Tile for the whole suite): clear their queue first.
+			if (!c.isDead && c.currentActionNode != null && c.currentActionNode.goapType != action)
+			{
+				string was = $"{c.currentJob?.jobType.ToString() ?? "no job"} / {c.currentActionNode.goapName}";
+				Try($"clear {c.name}'s jobs", () => { c.CancelAllJobs(); c.StopCurrentActionNode("autotest"); });
+				Log($"  {c.name}: cleared {was} (now {c.currentActionNode?.goapName ?? "nothing"})");
+			}
+			Try($"give {c.name} the {what} job", () => PlusBridge.PlanRecordAction(c, write, carrier));
+			bool taken = c.currentActionNode?.goapType == action
+				|| c.jobQueue.jobsInQueue.OfType<GoapPlanJob>().Any(j => j.targetInteractionType == action && j.targetPOI == carrier);
+			Log($"  {c.name}: {what} job at {carrier.name} {(taken ? "taken" : "REFUSED")} (canPerform={c.limiterComponent.canPerform}, doing {c.currentActionNode?.goapName ?? "nothing"})");
 		}
 
 		// Phase 3: a resident none of their people has seen for a while is reported missing,
@@ -4268,17 +4385,17 @@ namespace RuinarchDebug
 			// formed morning after morning) runs out of test time with searches still pending.
 			string starved = !settled() && _partyShortages >= 3
 				? $"no search party could be formed {_partyShortages} times: {village.name}'s residents were busy ({Describe(village)})" : null;
-			// A body found and buried (Mass Grave, cemetery) before anyone missed the victim was
-			// never missing: the record goes quietly, with no "found dead".
-			bool buriedFirst = !ModsLogHas($"{victim.name} of {village.name} has gone missing")
-				&& (victim.grave != null || ModsLogHas($"Mass Grave: {victim.name} laid in the pit"));
+			// A body come across (by a passer-by, a search for someone else) or buried before
+			// anyone missed the victim: they were never missing, so the record goes quietly, with
+			// no "found dead".
+			bool neverMissed = !ModsLogHas($"{victim.name} of {village.name} has gone missing") && PlusBridge.MissingState(victim) == null;
 			if (starved != null && PlusBridge.MissingState(victim) != null)
 			{
 				Skip("a resident killed out of sight is found dead", starved);
 			}
-			else if (buriedFirst)
+			else if (neverMissed)
 			{
-				Skip("a resident killed out of sight is found dead", $"{victim.name}'s body was found and buried before anyone missed them");
+				Skip("a resident killed out of sight is found dead", $"{victim.name}'s body was come across before anyone missed them (grave={(victim.grave != null ? "yes" : "no")})");
 			}
 			else Check("a resident killed out of sight is found dead", () =>
 			{
@@ -4780,11 +4897,16 @@ namespace RuinarchDebug
 			LocationStructureObject portal = InnerMapManager.Instance
 				.GetStructurePrefabsForStructure(FACTION_TYPE.Demons, STRUCTURE_TYPE.THE_PORTAL, RESOURCE.NONE)
 				.First().GetComponent<LocationStructureObject>();
-			// As far from every settlement as the rules allow: nobody defends the Portal in an
-			// unattended run, and a Portal that villagers stumble on early gets destroyed (the
-			// world ends in defeat mid-run).
+			// As far from every settlement and every village spot as the rules allow: nobody
+			// defends the Portal in an unattended run, and a Portal that villagers stumble on
+			// early gets destroyed (the world ends in defeat mid-run). Homeless villagers found
+			// new villages on the region's empty village spots mid-run, so those count too: a
+			// village founded beside the Portal feeds its people to the Portal's defenders, whose
+			// poison explosions wear the Portal down.
 			List<LocationGridTile> settlementCentres = GridMap.Instance.mainRegion.settlementsInRegion
-				.SelectMany(s => s.areas).Select(a => a.gridTileComponent.centerGridTile).Where(t => t != null).ToList();
+				.SelectMany(s => s.areas)
+				.Concat(GridMap.Instance.mainRegion.villageSpots.SelectMany(v => v.reservedAreas.Append(v.coreSpot)))
+				.Where(a => a != null).Select(a => a.gridTileComponent.centerGridTile).Where(t => t != null).ToList();
 			foreach (Area area in GridMap.Instance.mainRegion.areas.Where(a => a.gridTileComponent.centerGridTile != null)
 				.OrderByDescending(a => settlementCentres.Count == 0 ? 0f : settlementCentres.Min(t => t.GetDistanceTo(a.gridTileComponent.centerGridTile))))
 			{
@@ -4923,6 +5045,29 @@ namespace RuinarchDebug
 			}
 			catch
 			{
+			}
+		}
+
+		// Why a Write or Read job left a villager's queue before it was done (a dropped job
+		// shows only as "doing nothing" otherwise): the game's reason and the caller.
+		[HarmonyPatch(typeof(JobQueue), nameof(JobQueue.RemoveJobInQueue))]
+		internal static class RecordJobRemoved
+		{
+			private static void Prefix(JobQueue __instance, JobQueueItem job, string reason)
+			{
+				try
+				{
+					if (_running == null || !(job is GoapPlanJob plan)
+						|| (plan.targetInteractionType != PlusBridge.RecordAction(true) && plan.targetInteractionType != PlusBridge.RecordAction(false)))
+					{
+						return;
+					}
+					string caller = string.Join(" < ", new System.Diagnostics.StackTrace().GetFrames().Skip(2).Take(4).Select(f => f.GetMethod()?.DeclaringType?.Name + "." + f.GetMethod()?.Name));
+					_running.Log($"  record job removed: {__instance.owner?.name} {plan.jobType} {plan.targetInteractionType.ToString()} at {plan.targetPOI?.name} reason='{reason}' via {caller}");
+				}
+				catch
+				{
+				}
 			}
 		}
 

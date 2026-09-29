@@ -18,6 +18,10 @@ namespace RuinarchPlus
 		// Phase 1 exploit fixes (on by default; set false to keep the exploits): Sacrifice or
 		// Let It Go cast on a Kennel no longer takes a flying monster that is only passing over.
 		public bool closeExploits = true;
+		// Explosions your side sets off (poison and frozen explosions, chain lightning, from your
+		// spells or your demons) no longer damage your demonic buildings, as your spells already
+		// don't. Set false for the base game (the Portal's defenders can wear it down).
+		public bool friendlyExplosionsSpareBuildings = true;
 
 		// Phase 2 - Death, Decay & Disease.
 		// Unburied corpses left in the open rot over time and eventually vanish,

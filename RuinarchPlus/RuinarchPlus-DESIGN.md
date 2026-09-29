@@ -95,6 +95,16 @@ Self-contained. Each fix is independently verifiable in-game. All of Phase 1 bel
   `SnatchObjectUIController.ConstructDropLocationChoices` only lists *bookmarked* structures,
   so with none the Snatch button stays disabled. Postfix: for a character target with no
   usable bookmark, list the player's demonic structures. *(verified in game)*
+- **Friendly explosions destroy the Portal** (`Fixes/Fix_FriendlyExplosions.cs`, config
+  `friendlyExplosionsSpareBuildings`): `TileObject.AdjustHP` skips player-spell damage on
+  demonic structure objects (`CombatManager.IsDamageSourceFromPlayerSpell`), but not
+  `CombatManager.PoisonExplosionEffect` / `FrozenExplosionEffect` or
+  `ChainedElectric.ChainElectricEffect` set off by a player-faction character. Portal
+  defenders (`DemonDefendPartyQuest`) fighting beside it chained poison explosions that
+  took a full-health Portal in 17 s (harness run 36, defeat). Prefixes skip those effects
+  on `IsDemonicStructureTileObject` / `STRUCTURE_BLOCKER_TILE_OBJECT` when the source is
+  the player or a player-faction character. *(harness `ExplosionTest`: one 2-stack
+  explosion by a Portal defender took 6,020 Portal HP with the fix off, 0 with it on)*
 
 ---
 

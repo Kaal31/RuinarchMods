@@ -23,6 +23,7 @@ migration, growing settlements, famine, hunting and trade). These change the gam
 | 8 | Bug | **The Snatch window always offers somewhere to drop your catch.** It only listed bookmarked buildings, so with nothing bookmarked no drop-off could be chosen and the Snatch button stayed greyed out. When you snatch a character and no bookmark will do, it now lists your own demonic buildings. |
 | 9 | Bug | **Big fires no longer drop the frame rate to a crawl.** Every hit on a burning wall made the whole building recalculate its pathfinding, so a burning village kept the pathfinder busy for half of every frame (9 fps at 4x speed in a test with a village on fire, 18 with the fix). A wall that is damaged but still standing blocks the way exactly as before, so it now only recalculates when a wall breaks. |
 | 10 | Bug | **The village center's Residents tab lists the village.** The tab lists the people who live in that building, and nobody lives in the center (villagers live in dwellings), so it was always empty. On a village center it now shows everyone living in the village; other buildings still show their own household. |
+| 11 | Bug | **Your demons no longer blow up your Portal.** The game spares your buildings from your own spells, but not from the elemental explosions your demons set off. When the Portal's defenders fought villagers or monsters right beside it, their poison explosions took up to all of the max HP of everything in range, the Portal included: in a test, one chain destroyed a full-health Portal in 17 seconds and the game was lost. Poison and frozen explosions and chain lightning set off by your side now leave your demonic buildings alone; villagers and monsters caught in them are hurt as before. Switch off with `friendlyExplosionsSpareBuildings`. |
 
 ## Phase 2: Death, Decay & Disease (in progress)
 
@@ -106,6 +107,7 @@ your `Mods/RuinarchPlus/` folder:
 |------|---------|--------|
 | `disableTutorial` | `false` | Set to `true` to skip the tutorial/alert bootstrap (`TutorialManager.Initialize`). Veterans get no tutorial alert hand-holding. Off = base game unchanged. |
 | `closeExploits` | `true` | Close the exploits Ruinarch+ fixes (Sacrifice / Let It Go on a Kennel taking a monster only flying over it). Set `false` to keep them. |
+| `friendlyExplosionsSpareBuildings` | `true` | Explosions your side sets off (poison, frozen, chain lightning) leave your demonic buildings alone. Set `false` for the base game. |
 | `corpseDecayEnabled` | `true` | Unburied corpses rot and eventually decompose away. Set `false` for vanilla (corpses persist forever). |
 | `corpseDecayDays` | `3` | In-game days an unburied corpse takes to fully decompose (480 ticks/day; floor 1/4 day). |
 | `massGraveBurialEnabled` | `true` | Villages without a Cemetery/Cult Temple stop scattering graves, build a Mass Grave when they have unburied dead, and carry all bodies (including creatures) into it. Set `false` for vanilla burial. |

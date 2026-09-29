@@ -361,14 +361,18 @@ namespace RuinarchPlus.Phase3
 			}
 		}
 
-		/// <summary>Forget everything the members of <paramref name="faction"/> remember (test harness).</summary>
+		/// <summary>Forget everything the people of <paramref name="faction"/> remember or carry
+		/// (test harness): its members, and whoever lives in its villages (a resident who lost
+		/// their faction still tells the household at home).</summary>
 		internal static void Forget(Faction faction)
 		{
 			if (faction == null)
 			{
 				return;
 			}
-			foreach (Character c in Memory.Keys.Where(c => c?.faction == faction).ToList())
+			HashSet<NPCSettlement> villages = new HashSet<NPCSettlement>(VillagesOf(faction));
+			foreach (Character c in Memory.Keys.Concat(Carried.Keys).Distinct()
+				.Where(c => c != null && (c.faction == faction || (c.homeSettlement is NPCSettlement home && villages.Contains(home)))).ToList())
 			{
 				Memory.Remove(c);
 				Carried.Remove(c);
