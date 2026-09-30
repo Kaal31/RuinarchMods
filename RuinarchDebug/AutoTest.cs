@@ -1625,7 +1625,9 @@ namespace RuinarchDebug
 				}
 			}
 
-			foreach (Character c in people.Where(c => !c.isDead))
+			// Everyone who lives there now, not only those the test started with: some left for
+			// food, and a hungry resident the test never tracked holds the fed clock back.
+			foreach (Character c in people.Concat(village.residents.Where(r => r != null && r.isNormalCharacter)).Distinct().Where(c => !c.isDead))
 			{
 				c.needsComponent.SetFullness(100f);
 			}
@@ -2327,6 +2329,13 @@ namespace RuinarchDebug
 				{
 					// Demon cultists keep the player's secrets (Knowledge.Counts).
 					Skip("the trader tells the other faction what theirs knows", $"{trader.name} is on the player's side and tells nobody");
+				}
+				else if (news && !to.residents.Any(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient() && !r.isAlliedWithPlayer))
+				{
+					// A faction knows through its people (Knowledge.CanRemember, Counts): with none
+					// who can remember or who are not on the player's side, nobody there can learn.
+					Skip("the trader tells the other faction what theirs knows", $"nobody in {to.name} can learn it: "
+						+ string.Join(", ", to.residents.Where(r => r != null && !r.isDead).Select(r => $"{r.name}[{r.race} normal={r.isNormalCharacter} allied={r.isAlliedWithPlayer}]")));
 				}
 				else if (news)
 				{
