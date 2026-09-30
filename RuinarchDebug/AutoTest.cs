@@ -1814,7 +1814,10 @@ namespace RuinarchDebug
 						rebel.AdjustHP(-(rebel.currentHP - Math.Max(1, rebel.maxHP / 5)), ELEMENTAL_TYPE.Normal);
 						return rebel;
 					});
+					// Everyone home, so the loyal side is there to stand by the ruler.
+					BringResidentsHome(village);
 					PlusBridge.SetUnrest(village, uprisingAt);
+					int riseMark4 = ModsLogLength();
 					// Only villagers in the village rise: keep the challenger there until it starts.
 					LocationGridTile square = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
 					yield return WaitGameHours(12f, () =>
@@ -1832,7 +1835,14 @@ namespace RuinarchDebug
 					});
 					bool rose2 = PlusBridge.HasUprising(village);
 					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(village));
-					CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
+					// Only those in the village and able to act take a side: with none standing by
+					// the ruler (asleep, knocked out, away), the brawl is one on one, the game's own.
+					string rising = ModsLogLineSince(riseMark4, $"leads an uprising against {newRuler.name} in {village.name}!");
+					if (village.ruler != newRuler && rising != null && rising.Contains(", 0 stand by them.)"))
+					{
+						Skip("a ruler who knocks the rebels out keeps the rule", $"nobody stood by the ruler, who lost the fight alone: {rising}");
+					}
+					else CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
 						(rose2 && village.ruler == newRuler && (ModsLogHas($"{newRuler.name} has put down the uprising in {village.name}") || ModsLogHas($"The uprising in {village.name} has failed"))
 							&& newRuler.relationshipContainer.HasGrudgeAgainst(rebel),
 						$"rose={rose2} ruler={village.ruler?.name} (was {newRuler.name}); challenger {rebel.name} unconscious={rebel.traitContainer.HasTrait("Unconscious")} grudge={newRuler.relationshipContainer.HasGrudgeAgainst(rebel)}"));
@@ -2303,7 +2313,22 @@ namespace RuinarchDebug
 			Log($"trade test: {Describe(from)} -> {Describe(to)}");
 			// Up to half a day: at night the village's people are asleep and nobody sets out.
 			Character trader = null;
-			yield return WaitGameHours(12f, () => (trader = PlusBridge.SendTrader(from, to, 40)) != null);
+			// Hungry villagers eat from the storage while the test waits (settlers fleeing a
+			// famine were seen to empty it): keep a pile the trader can take there.
+			yield return WaitGameHours(12f, () =>
+			{
+				if (!from.mainStorage.pointsOfInterest.OfType<ResourcePile>().Any(p => p.providedResource == RESOURCE.FOOD && p.resourceInPile >= 40 && p.characterOwner == null))
+				{
+					LocationGridTile spot = from.mainStorage.GetRandomUnoccupiedTile();
+					if (spot != null)
+					{
+						FoodPile more = InnerMapManager.Instance.CreateNewTileObject<FoodPile>(TILE_OBJECT_TYPE.ANIMAL_MEAT);
+						more.SetResourceInPile(100);
+						from.mainStorage.AddPOI(more, spot);
+					}
+				}
+				return (trader = PlusBridge.SendTrader(from, to, 40)) != null;
+			});
 			LocationGridTile dest = to.mainStorage.passableTiles.FirstOrDefault();
 			Check("a village with food to spare sends a trader", () => (trader != null, trader == null
 				? $"nobody went; {from.name}'s storage: free tiles={from.mainStorage.tiles.Count(t => !t.isOccupied)}, food piles "
@@ -5306,6 +5331,21 @@ namespace RuinarchDebug
 			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
 			string all = File.Exists(mods) ? File.ReadAllText(mods) : "";
 			return all.Length > mark && all.IndexOf(text, mark, StringComparison.Ordinal) >= 0;
+		}
+
+		// The first mods.log line with <paramref name="text"/> after the first <paramref name="mark"/> characters, or null.
+		private string ModsLogLineSince(int mark, string text)
+		{
+			string mods = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_logPath)), "mods.log");
+			string all = File.Exists(mods) ? File.ReadAllText(mods) : "";
+			int at = all.Length > mark ? all.IndexOf(text, mark, StringComparison.Ordinal) : -1;
+			if (at < 0)
+			{
+				return null;
+			}
+			int start = all.LastIndexOf('\n', at) + 1;
+			int end = all.IndexOf('\n', at);
+			return all.Substring(start, (end < 0 ? all.Length : end) - start).Trim();
 		}
 
 		// Whether mods.log has <paramref name="then"/> somewhere after the first <paramref name="first"/>.
