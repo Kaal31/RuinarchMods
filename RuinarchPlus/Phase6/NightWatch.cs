@@ -53,7 +53,8 @@ namespace RuinarchPlus.Phase6
 			return c != null && !c.isDead && c.homeSettlement == s && c.faction == s.owner && c.isNormalCharacter && c.race.IsSapient()
 				&& !Phase4.LifeCycle.IsChild(c) && c.characterClass != null && c.characterClass.IsCombatant()
 				&& c != s.ruler && !c.isFactionLeader && !c.traitContainer.HasTrait("Restrained")
-				&& !(c.partyComponent.hasParty && c.partyComponent.currentParty.isActive);
+				// Any party, gathering or away: its members follow the party's schedule (asleep at night).
+				&& !c.partyComponent.hasParty;
 		}
 
 		private static bool Fighter(NPCSettlement s, Character c)
@@ -178,7 +179,7 @@ namespace RuinarchPlus.Phase6
 		{
 			return g == null || g.isDead ? "dead" : g.homeSettlement != s ? "moved away" : g.faction != s.owner ? "left the faction"
 				: g.characterClass == null || !g.characterClass.IsCombatant() ? "no longer a fighter" : g == s.ruler || g.isFactionLeader ? "now rules"
-				: g.traitContainer.HasTrait("Restrained") ? "held" : g.partyComponent.hasParty && g.partyComponent.currentParty.isActive ? "away with a party" : "no longer fit";
+				: g.traitContainer.HasTrait("Restrained") ? "held" : g.partyComponent.hasParty ? "in a party" : "no longer fit";
 		}
 
 		private static void Release(NPCSettlement s, List<Character> guards, Character g, string why)

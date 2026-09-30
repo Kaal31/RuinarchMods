@@ -115,8 +115,10 @@ The mod keeps who it holds (the old ruler, the village, since when). Each hour:
   exiled (Restrained removed, `KickOutCharacterAndRollForGrudge`): "{judge} has exiled
   {ruler}, once ruler of {village}."; otherwise released (Restrained removed, stays a
   villager): "{judge} has released {ruler}, once ruler of {village}.";
-- no longer Restrained before that (freed by a friend, or broke loose): "{ruler}, once
-  ruler of {village}, has escaped the prison." and the mod lets go;
+- no longer Restrained before that (freed by a friend, or broke loose by the game's own
+  hourly escape roll for anyone Restrained, `CharacterClassComponent.PerHour`: a Barbarian
+  50 %, any other sapient 1 %, once awake): "{ruler}, once ruler of {village}, has escaped
+  the prison." and the mod lets go;
 - not in the prison 12 hours after the uprising (nobody could carry them): released where
   they are, no announcement beyond the overthrow;
 - dead, or left the faction: the mod lets go.

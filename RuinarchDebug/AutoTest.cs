@@ -1059,12 +1059,13 @@ namespace RuinarchDebug
 				return dead.grave != null;
 			});
 			STRUCTURE_TYPE? graveIn = dead.grave?.gridTileLocation?.structure?.structureType;
-			if (graveIn != null && graveIn != STRUCTURE_TYPE.CEMETERY && buryJobs.Count > 0 && buryJobs.All(j => j.Contains("-> CEMETERY"))
-				&& village.structures.TryGetValue(STRUCTURE_TYPE.CEMETERY, out List<LocationStructure> cemeteries) && cemeteries.All(c => c.unoccupiedTiles.Count == 0))
+			if (graveIn != null && graveIn != STRUCTURE_TYPE.CEMETERY && buryJobs.Count > 0 && buryJobs.All(j => j.Contains("-> CEMETERY")))
 			{
-				// The burial went to the Cemetery; with no free tile left there the game itself
-				// puts the gravestone next to it.
-				Skip("cemetery village still buries its dead in the Cemetery", $"the Cemetery is full: grave in {graveIn}; jobs: {string.Join("; ", buryJobs)}");
+				// The burial went to the Cemetery (the mod's part). The game plants the stone on
+				// the burier's own tile (BuryCharacter.AfterBurySuccess): next to a full Cemetery,
+				// or wherever the burier stopped short of it.
+				int free = village.structures.TryGetValue(STRUCTURE_TYPE.CEMETERY, out List<LocationStructure> cemeteries) ? cemeteries.Sum(c => c.unoccupiedTiles.Count) : 0;
+				Skip("cemetery village still buries its dead in the Cemetery", $"sent to the Cemetery ({free} free tile(s)), the game placed the stone in {graveIn}; jobs: {string.Join("; ", buryJobs)}");
 			}
 			else
 			{
@@ -1730,6 +1731,7 @@ namespace RuinarchDebug
 			float uprisingAt = PlusBridge.Config("unrestUprising") is int uu ? uu : 72;
 			Guard("hurt the ruler", () => { ruler.AdjustHP(-(ruler.currentHP - Math.Max(1, ruler.maxHP / 5)), ELEMENTAL_TYPE.Normal); return ruler; });
 			PlusBridge.SetUnrest(village, uprisingAt);
+			int riseMark = ModsLogLength();
 			// Up to a night: asleep, nobody rises until morning.
 			yield return WaitGameHours(12f, () =>
 			{
@@ -1764,7 +1766,13 @@ namespace RuinarchDebug
 				newRuler = village.ruler;
 				Log("  after the uprising: " + string.Join(", ", adults(village).Concat(new[] { ruler }).Distinct().Select(c =>
 					$"{c.name}[opinion of {newRuler?.name}={(newRuler == null || c == newRuler ? 0 : c.relationshipContainer.GetTotalOpinion(newRuler))} wanted={c.crimeComponent.IsWantedBy(village.owner)} crimes={string.Join("/", c.crimeComponent.activeCrimes.Select(k => k.crimeType))} unconscious={c.traitContainer.HasTrait("Unconscious")} canPerform={c.limiterComponent.canPerform}]")));
-				Check("the rebels who knock the ruler out take the rule", () =>
+				// Few awake to rise (one rebel against a hurt ruler) can lose the game's own fight:
+				// the takeover is then not reached, which step 4 measures from the other side.
+				if (newRuler == ruler && ModsLogHasSince(riseMark, $"{ruler.name} has put down the uprising in {village.name}"))
+				{
+					Skip("the rebels who knock the ruler out take the rule", $"the ruler won the brawl against {fighting} rebel(s) at once");
+				}
+				else Check("the rebels who knock the ruler out take the rule", () =>
 					(newRuler != null && newRuler != ruler && ModsLogHas("in an uprising") && people.Contains(newRuler),
 					$"ruler {ruler.name} -> {newRuler?.name ?? "none"}; ruler unconscious={ruler.traitContainer.HasTrait("Unconscious")} uprising={PlusBridge.HasUprising(village)}"));
 				// The game puts a faction leader back in charge of their home village: it must stick.
@@ -2040,6 +2048,12 @@ namespace RuinarchDebug
 					else if (overthrown && !stillHeld && ModsLogHasSince(jailMark, $"{old.name}, once ruler of {jv.name}, is no longer of its faction and is let go."))
 					{
 						Skip(jailCheck, $"the game took them out of the faction (now {old.faction?.name ?? "none"}): " + detail);
+					}
+					// The game's own hourly escape roll for anyone Restrained (a Barbarian 50 %, any
+					// other sapient 1 %: CharacterClassComponent.PerHour) frees prisoners too.
+					else if (overthrown && !stillHeld && HeldUntied.How(old) is string how && how.Contains("CharacterClassComponent.PerHour"))
+					{
+						Skip(jailCheck, $"they broke free by the game's escape roll ({old.characterClass?.className}): " + detail);
 					}
 					else Check(jailCheck, () => (overthrown && delivered && stillHeld, detail));
 					if (!stillHeld)
@@ -3666,7 +3680,16 @@ namespace RuinarchDebug
 						CharacterManager.Instance.Teleport(witness, home);
 						return witness;
 					});
-					yield return WaitGameHours(3f, () => PlusBridge.Knows(faction, portal) || witness.isDead);
+					// Telling is hourly and needs them in the village: one who walks out again
+					// before the hour (a job elsewhere, a flight) is brought back.
+					yield return WaitGameHours(3f, () =>
+					{
+						if (!witness.isDead && witness.currentSettlement != witness.homeSettlement && witness.carryComponent.isBeingCarriedBy == null)
+						{
+							CharacterManager.Instance.Teleport(witness, home);
+						}
+						return PlusBridge.Knows(faction, portal) || witness.isDead;
+					});
 					if (witness.isDead && !PlusBridge.Knows(faction, portal))
 					{
 						// The news dies with them, as the doomed witness check above expects.
@@ -3820,9 +3843,12 @@ namespace RuinarchDebug
 			Character demon = CharacterManager.Instance.allCharacters.FirstOrDefault(c => !c.isDead && c.faction != null && c.faction.isPlayerFaction);
 			object setting = PlusBridge.Config("friendlyExplosionsSpareBuildings");
 			int[] lost = new int[2];
+			// The fix first: the vanilla blast leaves poison and fire around the Portal that the
+			// clean-up below (the Portal's own objects) does not reach, and would tick into the
+			// next measure.
 			for (int i = 0; i < 2; i++)
 			{
-				bool fixOn = i == 1;
+				bool fixOn = i == 0;
 				int before = portal.currentHP;
 				Try($"poison explosion on the Portal (fix {(fixOn ? "on" : "off")})", () =>
 				{
@@ -3830,7 +3856,7 @@ namespace RuinarchDebug
 					CombatManager.Instance.PoisonExplosion(core, core.gridTileLocation, 2, demon, 1, demon == null);
 				});
 				yield return WaitGameHours(0.5f, null);
-				lost[i] = before - portal.currentHP;
+				lost[fixOn ? 1 : 0] = before - portal.currentHP;
 				Try("heal and clean the Portal", () =>
 				{
 					foreach (TileObject o in portal.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>().Where(o => o.tileObjectType.IsDemonicStructureTileObject()).Distinct())
@@ -4267,11 +4293,15 @@ namespace RuinarchDebug
 				CheckAlive(writer, "a villager writes in the Library", () =>
 					(PlusBridge.RecordOf(library)?.Contains(portal) == true && LogsOf(libCarrier, wrote).Count > 0,
 					$"record={record(library)} carrier {describeCarrier(libCarrier)}; writer in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
+				// The record is planted by someone alive: the writer, or (if the world killed them)
+				// any free villager (Knowledge.Read and Records.Write refuse the dead).
+				Character scribe() => writer != null && !writer.isDead ? writer : village.residents.FirstOrDefault(able);
 				Guard("leave only the Library's record, and nobody who remembers", () =>
 				{
+					Character s = scribe();
 					PlusBridge.ForgetRecords(faction);
-					PlusBridge.RememberAtHome(writer, portal);
-					PlusBridge.WriteRecord(writer, library);
+					PlusBridge.RememberAtHome(s, portal);
+					PlusBridge.WriteRecord(s, library);
 					PlusBridge.ForgetMemory(faction);
 					return library;
 				});
@@ -4321,7 +4351,7 @@ namespace RuinarchDebug
 				// 9. The Library destroyed: announced, its record gone.
 				if (PlusBridge.RecordOf(library)?.Contains(portal) != true)
 				{
-					Guard("write the Library's record again", () => { PlusBridge.RememberAtHome(writer, portal); PlusBridge.WriteRecord(writer, library); return library; });
+					Guard("write the Library's record again", () => { Character s = scribe(); PlusBridge.RememberAtHome(s, portal); PlusBridge.WriteRecord(s, library); return library; });
 				}
 				mark = ModsLogLength();
 				Guard("destroy the Library", () => { library.AdjustHP(-library.currentHP); return library; });
@@ -4448,7 +4478,7 @@ namespace RuinarchDebug
 			// away with a party, not held (the rest may all be busy; then nothing to measure).
 			Func<NPCSettlement, int> free = v => v.residents.Count(c => c != null && !c.isDead && c.isNormalCharacter && c.faction == v.owner && c.homeSettlement == v
 				&& c.characterClass != null && c.characterClass.IsCombatant() && c != v.ruler && !c.isFactionLeader && !PlusBridge.IsChild(c)
-				&& !c.traitContainer.HasTrait("Restrained") && !(c.partyComponent.hasParty && c.partyComponent.currentParty.isActive));
+				&& !c.traitContainer.HasTrait("Restrained") && !c.partyComponent.hasParty);
 			NPCSettlement village = Villages().Where(v => v.owner != null && v.owner.isMajorNonPlayer && v.cityCenter != null && PlusBridge.Tier(v) != "Village" && fighters(v) >= 4 && free(v) > 0)
 				.OrderByDescending(free).FirstOrDefault();
 			if (village == null)
@@ -4472,7 +4502,7 @@ namespace RuinarchDebug
 			// 2. Guards sleep by day.
 			Character other = village.residents.FirstOrDefault(c => c != null && !c.isDead && c.isNormalCharacter && !guards.Contains(c) && !c.partyComponent.hasParty && !c.traitContainer.HasTrait("Nocturnal"));
 			Check("guards keep the night schedule, other villagers do not", () =>
-				(guards.All(g => g.partyComponent.hasParty || g.dailyScheduleComponent.schedule is NocturnalSchedule) && (other == null || !(other.dailyScheduleComponent.schedule is NocturnalSchedule)),
+				(guards.All(g => g.dailyScheduleComponent.schedule is NocturnalSchedule) && (other == null || !(other.dailyScheduleComponent.schedule is NocturnalSchedule)),
 				$"guards: {string.Join(", ", guards.Select(g => $"{g.name}={g.dailyScheduleComponent.schedule?.GetType().Name}"))}; {other?.name ?? "nobody"}={other?.dailyScheduleComponent.schedule?.GetType().Name}"));
 
 			// 3. At night, at home, they patrol, aggressive.
@@ -5504,6 +5534,34 @@ namespace RuinarchDebug
 					}
 					string caller = string.Join(" < ", new System.Diagnostics.StackTrace().GetFrames().Skip(2).Take(4).Select(f => f.GetMethod()?.DeclaringType?.Name + "." + f.GetMethod()?.Name));
 					_running.Log($"  record job removed: {__instance.owner?.name} {plan.jobType} {plan.targetInteractionType.ToString()} at {plan.targetPOI?.name} reason='{reason}' via {caller}");
+				}
+				catch
+				{
+				}
+			}
+		}
+
+		// Who unties a jailed ex-ruler behind the mod's back (the mod lets go of its hold before
+		// removing the trait itself, so only an outside removal is logged). The last way each
+		// was untied is kept for the jailing check.
+		[HarmonyPatch(typeof(Traits.Restrained), nameof(Traits.Restrained.OnRemoveTrait))]
+		internal static class HeldUntied
+		{
+			private static readonly Dictionary<Character, string> Last = new Dictionary<Character, string>();
+
+			internal static string How(Character c) => c != null && Last.TryGetValue(c, out string how) ? how : null;
+
+			private static void Prefix(Traits.ITraitable sourceCharacter, Character removedBy)
+			{
+				try
+				{
+					if (_running == null || !(sourceCharacter is Character c) || PlusBridge.HeldState(c) == null)
+					{
+						return;
+					}
+					string caller = string.Join(" < ", new System.Diagnostics.StackTrace().GetFrames().Skip(2).Take(10).Select(f => f.GetMethod()?.DeclaringType?.Name + "." + f.GetMethod()?.Name));
+					Last[c] = caller;
+					_running.Log($"  held ex-ruler untied: {c.name} ({PlusBridge.HeldState(c)}, {c.characterClass?.className}) by {removedBy?.name ?? "nobody"} (friend={removedBy != null && removedBy.relationshipContainer.IsFriendsWith(c)}) in {c.currentStructure?.name ?? "the wild"} via {caller}");
 				}
 				catch
 				{

@@ -42,7 +42,8 @@ included) and has at least 4 combatants. Watch size: one guard per 8 residents, 
 1, at most 3.
 
 Guards: residents of the settlement who are combatants (`characterClass.IsCombatant()`),
-alive, adult, not in an active party, not the ruler or faction leader, not Restrained;
+alive, adult, in no party (a gathering party's members already keep the party's schedule
+and sleep at night), not the ruler or faction leader, not Restrained;
 picked by highest Martial Arts talent, then at random. Checked every hour: a guard who no
 longer qualifies (dead, left, joined a party, became the ruler, changed class) is replaced;
 extra guards are released when the settlement shrinks or drops to a village.
