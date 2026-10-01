@@ -3319,7 +3319,7 @@ namespace RuinarchDebug
 			HarmonyMethod post = new HarmonyMethod(AccessTools.Method(typeof(AutoTest), nameof(HotPost)));
 			int patched = 0;
 			int failed = 0;
-			foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies().Where(a => a.GetName().Name == "Assembly-CSharp" || a.GetName().Name == "AstarPathfindingProject"))
+			foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies().Where(a => PlusBridge.SafeName(a) == "Assembly-CSharp" || PlusBridge.SafeName(a) == "AstarPathfindingProject"))
 			{
 				Type[] types;
 				try { types = a.GetTypes(); }

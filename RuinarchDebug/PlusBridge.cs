@@ -23,9 +23,28 @@ namespace RuinarchDebug
 			{
 				if (_plus == null)
 				{
-					_plus = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "RuinarchPlus");
+					_plus = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => SafeName(a) == "RuinarchPlus");
 				}
 				return _plus;
+			}
+		}
+
+		// An assembly's simple name, or null: dynamic assemblies are skipped, and one whose
+		// name cannot be read is passed over (Mono once threw CultureNotFoundException from
+		// GetName() on a loaded assembly, which ended a whole harness run).
+		internal static string SafeName(System.Reflection.Assembly a)
+		{
+			if (a == null || a.IsDynamic)
+			{
+				return null;
+			}
+			try
+			{
+				return a.GetName().Name;
+			}
+			catch
+			{
+				return null;
 			}
 		}
 
