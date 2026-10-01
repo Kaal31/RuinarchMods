@@ -1,0 +1,7 @@
+{
+  "id": "kaal31.ruinarch.coop",
+  "name": "Ruinarch Co-op: World Transfer Preview",
+  "version": "0.1.0",
+  "author": "Kaal31",
+  "description": "Experimental LAN world-transfer and independent-camera test. Both worlds remain paused. Live replication and guest abilities are not implemented."
+}

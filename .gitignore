@@ -23,3 +23,6 @@ config.json
 !**/*.cs
 !**/mod.json
 !**/art/**
+
+# Co-op test world snapshots
+SessionCache/
