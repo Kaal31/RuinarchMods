@@ -186,6 +186,9 @@ namespace RuinarchDebug
 				}
 				int want = Math.Min(3, data.mapSettings.GetMaxStartingVillages());
 				FactionTemplate template = data.factionSettings.factionTemplates.FirstOrDefault() ?? data.factionSettings.AddFactionSetting(0);
+				// Cross-faction gossip needs two factions at startup, not a later secession.
+				if (Runs("FogSuite") && data.factionSettings.factionTemplates.Count < 2)
+					data.factionSettings.AddFactionSetting(1);
 				while (data.factionSettings.GetCurrentTotalVillageCountBasedOnFactions() < want)
 				{
 					template.AddVillageSetting(VillageSetting.Default);
@@ -263,8 +266,20 @@ namespace RuinarchDebug
 			if (Runs("FogSuite")) { yield return Safe("FogSuite", FogSuite()); }
 			// Records: home Books and a Library; forgets everything it teaches at the end.
 			if (Runs("RecordsSuite")) { yield return Safe("RecordsSuite", RecordsSuite()); }
-			// Waits ~72 in-game hours, during which villages lose people to the world.
-			if (Runs("DecayTest")) { yield return Safe("DecayTest", DecayTest()); }
+			// Exercise all decay stages at the supported minimum, then restore player config.
+			if (Runs("DecayTest"))
+			{
+				object decayDays = PlusBridge.Config("corpseDecayDays");
+				PlusBridge.SetConfig("corpseDecayDays", 0.25f);
+				try
+				{
+					yield return Safe("DecayTest", DecayTest());
+				}
+				finally
+				{
+					if (decayDays != null) PlusBridge.SetConfig("corpseDecayDays", decayDays);
+				}
+			}
 			// Starves one village until famine, then feeds it; some villagers move away.
 			if (Runs("FamineSuite")) { yield return Safe("FamineSuite", FamineSuite()); }
 			// Kills a villager, wrecks a building and sets the village against its ruler twice.
@@ -367,6 +382,9 @@ namespace RuinarchDebug
 			// in a crowded village no pit can ever be placed and the build tests measure nothing.
 			NPCSettlement bare = villages.Where(v => !v.HasStructure(STRUCTURE_TYPE.CEMETERY) && !v.HasStructure(STRUCTURE_TYPE.CULT_TEMPLE)
 					&& PitCount(v) == 0 && !PlusBridge.HasPendingBlueprint(v) && !v.HasJob(JOB_TYPE.PLACE_BLUEPRINT))
+				.Where(v => v.residents.Any(r => r != null && !r.isDead && r.hasMarker && r.gridTileLocation != null
+					&& r.isNormalCharacter && r.race.IsSapient() && r != v.ruler
+					&& (!r.partyComponent.hasParty || !r.partyComponent.currentParty.isActive)))
 				.OrderByDescending(v => HasRoomFor(v, STRUCTURE_TYPE.CEMETERY))
 				// The no-scatter tests kill two of its people; the rest must still build.
 				.ThenByDescending(v => v.residents.Count(r => r != null && !r.isDead && r.isNormalCharacter && r.race.IsSapient())).FirstOrDefault();
@@ -374,7 +392,7 @@ namespace RuinarchDebug
 
 			if (bare == null)
 			{
-				Skip("no-graveyard village tests", "every village has a Cemetery or Cult Temple");
+				Skip("no-graveyard village tests", "no village without a graveyard or pending construction has an eligible resident");
 			}
 			else
 			{
@@ -1024,22 +1042,19 @@ namespace RuinarchDebug
 				(victim != null && afterDeath == 1000 - 150, $"meter 1000 -> {afterDeath}"));
 			if (victim != null && victim.gridTileLocation != null && victim.gridTileLocation.IsPartOfSettlement(village))
 			{
-				// The death may also have emptied the victim's home; the body must halve the
-				// gain on top of whatever else applies.
+				// Remove just this body without yielding: emptied homes and earlier corpses
+				// stay unchanged, so this measures one corpse's contribution independently.
 				int withBody = Gain(true);
-				float m = PlusBridge.MigrationMultiplier(village, out string w);
-				// A village the world had already emptied (x0, "mostly abandoned") draws no
-				// settlers whatever else happens: no halving left to see.
-				if (w != null && w.Contains("mostly abandoned"))
+				victim.DestroyMarker();
+				int withoutBody = Gain(true);
+				if (withoutBody == 0)
 				{
-					Skip("an unburied body in the village halves migration", $"{village.name} is already mostly abandoned: x{m:0.##} {w}");
+					Skip("an unburied body in the village halves migration", $"{village.name} draws no settlers even without this body");
 				}
 				else
 				{
-					int homesFactor = w != null && w.Contains("abandoned home") ? int.Parse(w.Split(' ')[0]) : 0;
-					int expected = (int)(vanilla * Math.Pow(0.5, homesFactor + 1));
 					Check("an unburied body in the village halves migration", () =>
-						(withBody == expected && w != null && w.Contains("1 unburied body"), $"gain {withBody}, expected {expected} (vanilla {vanilla}); x{m:0.##} {w}"));
+						(withBody == withoutBody / 2, $"with body={withBody}, without this body={withoutBody}"));
 				}
 			}
 			else
@@ -1197,12 +1212,17 @@ namespace RuinarchDebug
 			Character mummy = beside == null ? null : Guard("spawn a creature to mummify", () => SpawnAndKillAt(beside, SUMMON_TYPE.Wolf));
 			bool mummified = mummy != null && Guard("mummify it", () => { mummy.traitContainer.AddTrait(mummy, "Mummified"); return mummy; }) != null
 				&& mummy.traitContainer.HasTrait("Mummified");
+			Watched.Add(body);
+			if (mummy != null) Watched.Add(mummy);
 			float start = GameHours;
 			string lastStage = firstStage;
+			HashSet<string> stages = new HashSet<string>();
+			if (firstStage != null) stages.Add(firstStage);
 
 			// Hovering the body shows its decay bar (the game's map HP bar), as full as the
 			// share of decay time left. The screen is saved as decaybar.png to look at.
-			yield return WaitGameHours(40f, () => PlusBridge.DecayStage(body) == "Bloated" || !body.hasMarker);
+			yield return WaitGameHours(3f, () => PlusBridge.DecayStage(body) == "Bloated" || !body.hasMarker);
+			if (PlusBridge.DecayStage(body) is string bloated) stages.Add(bloated);
 			if (body.hasMarker)
 			{
 				Camera cam = InnerMapCameraMove.Instance.camera;
@@ -1248,18 +1268,20 @@ namespace RuinarchDebug
 				});
 				cam.orthographicSize = zoom;
 			}
-			yield return WaitGameHours(100f, () =>
+			yield return WaitGameHours(8f, () =>
 			{
 				string st = PlusBridge.DecayStage(body);
 				if (st != null && st != lastStage)
 				{
 					Log($"  decay stage -> {st} after {GameHours - start:F1}h");
+					stages.Add(st);
 					lastStage = st;
 				}
 				return !body.hasMarker;
 			});
 			Check("unburied corpse decomposes and disappears", () =>
-				(!body.hasMarker, $"hasMarker={body.hasMarker} lastStage={lastStage} after {GameHours - start:F1}h"));
+				(!body.hasMarker && new[] { "Fresh", "Bloated", "Rotting", "Skeletal" }.All(stages.Contains),
+					$"hasMarker={body.hasMarker} stages={string.Join(",", stages)} lastStage={lastStage} after {GameHours - start:F1}h"));
 			if (!mummified)
 			{
 				Skip("a mummified body does not decay", mummy == null ? "no creature spawned beside the first" : "the Mummified status did not take");
@@ -1692,7 +1714,12 @@ namespace RuinarchDebug
 				// Only the famine's own moves count (announced "... has left <village> for ..."):
 				// villagers also change homes for the game's own reasons.
 				Func<Character, bool> moved = c => !c.isDead && c.homeSettlement != null && c.homeSettlement != village;
-				yield return WaitGameHours(26f, () => { starve(); return people.Any(moved); });
+				// A native home change must not end the wait before famine's daily move.
+				yield return WaitGameHours(26f, () =>
+				{
+					starve();
+					return people.Any(c => moved(c) && ModsLogHas($"{c.name} has left {village.name} for"));
+				});
 				List<Character> left = people.Where(c => moved(c) && ModsLogHas($"{c.name} has left {village.name} for")).ToList();
 				if (left.Count == 0 && (!hasRefuge(village) || PlusBridge.InFamine(village) == false))
 				{
@@ -1899,14 +1926,23 @@ namespace RuinarchDebug
 						}
 						return rebel;
 					});
+					// This branch measures defeated rebels, not a ruler incapacitated while waiting.
+					Action defend = () =>
+					{
+						if (newRuler.isDead) return;
+						newRuler.ResetToFullHP();
+						if (newRuler.traitContainer.HasTrait("Resting"))
+							newRuler.interruptComponent.TriggerInterrupt(INTERRUPT.Noise_Wake_Up, newRuler);
+					};
 					// Everyone home, so the loyal side is there to stand by the ruler.
 					BringResidentsHome(village);
 					PlusBridge.SetUnrest(village, uprisingAt);
 					int riseMark4 = ModsLogLength();
-					// Only villagers in the village rise: keep the challenger there until it starts.
+					// The previous uprising enforces a day's calm, then the rebel may be asleep.
 					LocationGridTile square = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
-					yield return WaitGameHours(12f, () =>
+					yield return WaitGameHours(36f, () =>
 					{
+						defend();
 						if (!rebel.isDead && rebel.gridTileLocation != null && !rebel.gridTileLocation.IsPartOfSettlement(village))
 						{
 							CharacterManager.Instance.Teleport(rebel, square);
@@ -1920,7 +1956,7 @@ namespace RuinarchDebug
 						rebel.traitContainer.AddTrait(rebel, "Unconscious");
 						return rebel.traitContainer.HasTrait("Unconscious") ? rebel : null;
 					}) != null;
-					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(village));
+					yield return WaitGameHours(14f, () => { defend(); return !PlusBridge.HasUprising(village); });
 					CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
 						(rose2 && knockedOut && village.ruler == newRuler
 							&& ModsLogHasSince(riseMark4, $"{newRuler.name} has put down the uprising in {village.name}")
@@ -2259,6 +2295,9 @@ namespace RuinarchDebug
 			{
 				foreach (Character c in held)
 				{
+					// Cursed deals true damage every tick. This fixture measures hunger,
+					// not death from an unrelated curse while the villagers are held.
+					c.traitContainer.RemoveTrait(c, "Cursed");
 					CharacterManager.Instance.Teleport(c, outside);
 					c.traitContainer.AddTrait(c, "Restrained");
 				}
@@ -2269,6 +2308,7 @@ namespace RuinarchDebug
 			{
 				foreach (Character c in held.Where(c => !c.isDead))
 				{
+					c.traitContainer.RemoveTrait(c, "Cursed");
 					// Freed by someone after all: held again, away.
 					if (!c.traitContainer.HasTrait("Restrained") || (c.gridTileLocation != null && c.gridTileLocation.IsPartOfSettlement(village)))
 					{
@@ -2281,8 +2321,9 @@ namespace RuinarchDebug
 				return false;
 			});
 			Check("villagers starving away from home do not put their village in famine", () =>
-				(!hungrySeen && PlusBridge.InFamine(village) == false, $"{held.Count} of {people.Count} held starving at {outside.localPlace}: hungry seen={hungrySeen} famine={PlusBridge.InFamine(village)} "
-					+ string.Join(", ", held.Select(c => $"{c.name}[starving={c.needsComponent.isStarving} restrained={c.traitContainer.HasTrait("Restrained")}]"))));
+				(held.All(c => !c.isDead && c.homeSettlement == village) && !hungrySeen && PlusBridge.InFamine(village) == false,
+					$"{held.Count} of {people.Count} held starving at {outside.localPlace}: hungry seen={hungrySeen} famine={PlusBridge.InFamine(village)} "
+					+ string.Join(", ", held.Select(c => $"{c.name}[dead={c.isDead} starving={c.needsComponent.isStarving} restrained={c.traitContainer.HasTrait("Restrained")}]"))));
 			Guard("free and feed them", () =>
 			{
 				LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
@@ -2512,7 +2553,7 @@ namespace RuinarchDebug
 				+ $" class={c.characterClass?.className} schedule={c.dailyScheduleComponent.schedule?.GetScheduleType(GameManager.Instance.Today().tick)}]";
 		}
 
-		// Kills a living resident who is currently inside (or next to) the village.
+		// Kills a living resident inside (or next to) the village, bringing an eligible one home if needed.
 		private Character KillResident(NPCSettlement village)
 		{
 			// Prefer someone standing on village tiles (settlement burial path); fall back to
@@ -2526,6 +2567,17 @@ namespace RuinarchDebug
 				.OrderBy(r => r.partyComponent.hasParty).FirstOrDefault()
 				?? village.residents.Where(r => able(r) && r.gridTileLocation.IsNextToOrPartOfSettlement(village))
 				.OrderBy(r => r.partyComponent.hasParty).FirstOrDefault();
+			if (victim == null)
+			{
+				// An errand can take every eligible resident away before the suite starts.
+				victim = village.residents.Where(able).OrderBy(r => r.partyComponent.hasParty).FirstOrDefault();
+				if (victim != null)
+				{
+					LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied);
+					if (home == null) return null;
+					CharacterManager.Instance.Teleport(victim, home);
+				}
+			}
 			if (victim == null)
 			{
 				return null;
@@ -4158,20 +4210,21 @@ namespace RuinarchDebug
 			Guard("make the listeners' faction unaware", () => { listeners.SetIsAwareOfPlayer(false); return listeners; });
 			PlusBridge.Learn(tellers, portal);
 			PlusBridge.SetConfig("gossipChance", 100);
-			// A meeting is one of them seeing the other: same structure or in line of sight. The
-			// teller may walk into a building or behind a wall, so bring the listener over again
-			// (to a tile in the teller's structure) until they meet.
-			for (int attempt = 0; attempt < 3 && !PlusBridge.Carries(listener, portal) && !teller.isDead && !listener.isDead; attempt++)
+			// Keep the meeting in place until the native sighting is processed. Either
+			// villager can otherwise walk out of view between teleport and the next tick.
+			yield return WaitGameHours(3f, () =>
 			{
+				if (PlusBridge.Carries(listener, portal) || teller.isDead || listener.isDead) return true;
 				LocationGridTile at = teller.gridTileLocation;
-				LocationGridTile beside = at?.neighbourList.FirstOrDefault(t => t != null && !t.isOccupied && t.structure == at.structure)
-					?? at?.neighbourList.FirstOrDefault(t => t != null && !t.isOccupied);
-				if (beside != null)
+				if (at != null && (listener.gridTileLocation?.structure != at.structure
+					|| !at.neighbourList.Contains(listener.gridTileLocation)))
 				{
-					Guard("bring the listener to the teller", () => { CharacterManager.Instance.Teleport(listener, beside); return listener; });
+					LocationGridTile beside = at.neighbourList.FirstOrDefault(t => t != null && !t.isOccupied && t.structure == at.structure)
+						?? at.neighbourList.FirstOrDefault(t => t != null && !t.isOccupied);
+					if (beside != null) CharacterManager.Instance.Teleport(listener, beside);
 				}
-				yield return WaitGameHours(1f, () => PlusBridge.Carries(listener, portal));
-			}
+				return PlusBridge.Carries(listener, portal);
+			});
 			Check("a villager tells someone of a friendly faction about a demonic building", () =>
 				(PlusBridge.Carries(listener, portal) && !PlusBridge.Knows(listeners, portal),
 				$"{teller.name} of {tellers.name} at {teller.gridTileLocation?.localPlace} -> {listener.name} of {listeners.name} at {listener.gridTileLocation?.localPlace}: carries={PlusBridge.Carries(listener, portal)} their faction knows={PlusBridge.Knows(listeners, portal)}"));
@@ -4659,6 +4712,9 @@ namespace RuinarchDebug
 				Log($"  no {what} job given: carrier={carrier?.name ?? "none"}");
 				yield break;
 			}
+			// Pending interactions from other villagers stop their target's current action.
+			// Cancel those as well as our actor's work before assigning the fixture job.
+			c.ForceCancelAllJobsTargetingThisCharacter(shouldDoAfterEffect: false);
 			yield return WaitGameHours(12f, () => c.isDead || c.limiterComponent.canPerform);
 			if (sendTo != null)
 			{
@@ -5013,8 +5069,11 @@ namespace RuinarchDebug
 			List<float> gaps = new List<float>();
 			string wandererWas = PlusBridge.MissingState(wanderer);
 			string captiveWas = PlusBridge.MissingState(captive);
-			Func<bool> settled = () => PlusBridge.MissingState(wanderer) == "Lost" && PlusBridge.MissingState(victim) == null
-				&& !captive.traitContainer.HasTrait("Restrained");
+			Func<bool> settled = () =>
+				(PlusBridge.MissingState(wanderer) == "Lost"
+					|| (PlusBridge.MissingState(wanderer) == "Seen" && PlusBridge.FailedSearches(wanderer) == 0))
+				&& (PlusBridge.MissingState(victim) == null || (!victim.hasMarker && PlusBridge.MissingState(victim) == "Lost"))
+				&& (captiveFound || !captive.traitContainer.HasTrait("Restrained") || captive.isDead);
 			_partyShortages = 0;
 			while (GameHours - start < 220f && !settled())
 			{
@@ -5782,8 +5841,10 @@ namespace RuinarchDebug
 					{
 						return;
 					}
-					string caller = string.Join(" < ", new System.Diagnostics.StackTrace().GetFrames().Skip(2).Take(4).Select(f => f.GetMethod()?.DeclaringType?.Name + "." + f.GetMethod()?.Name));
-					_running.Log($"  record job removed: {__instance.owner?.name} {plan.jobType} {plan.targetInteractionType.ToString()} at {plan.targetPOI?.name} reason='{reason}' via {caller}");
+					string caller = string.Join(" < ", new System.Diagnostics.StackTrace().GetFrames().Skip(2).Take(9).Select(f => f.GetMethod()?.DeclaringType?.Name + "." + f.GetMethod()?.Name));
+					Character actor = __instance.owner;
+					_running.Log($"  record job removed: {actor?.name} {plan.jobType} {plan.targetInteractionType.ToString()} at {plan.targetPOI?.name} reason='{reason}'"
+						+ $" fullness={actor?.needsComponent.fullness} tiredness={actor?.needsComponent.tiredness} resting={actor?.traitContainer.HasTrait("Resting")} party={actor?.partyComponent.hasParty} via {caller}");
 				}
 				catch
 				{

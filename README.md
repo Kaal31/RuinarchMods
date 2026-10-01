@@ -67,4 +67,21 @@ tools/build-mod.sh /path/to/RuinarchMods/RuinarchPlus "/path/to/Ruinarch/Mods"
 
 `tools/run-autotest.sh` in the same repo runs the RuinarchDebug test harness in the game.
 
+During development, run only the affected suites instead of generating a world for a full
+regression each time:
+
+```bash
+tools/run-autotest.sh 1200 "RecordsSuite,UnrestSuite,DecayTest"
+```
+
+The first argument is a wall-clock timeout, not a requested run duration. Checks stop as
+soon as their required behavior is observed. `DecayTest` temporarily uses the supported
+quarter-day decay setting, verifies all four stages and the decay bar, then restores the
+original setting. Missing-persons tests finish when their cases are settled; valid failed
+searches still exercise all three attempts and the increasing retry intervals. Burial fixtures
+bring an eligible resident home if needed; gossip fixtures start with two factions and
+maintain the meeting until the native sighting occurs. The migration corpse check compares
+gains with and without one body, so earlier deaths do not invalidate it. Full runs remain
+the release gate.
+
 This repo holds source only: no game binaries or assets.
