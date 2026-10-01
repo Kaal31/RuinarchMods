@@ -3912,10 +3912,61 @@ namespace RuinarchDebug
 				lost[fixOn ? 1 : 0] = before - portal.currentHP;
 				Try("heal and clean the Portal", () =>
 				{
-					foreach (TileObject o in portal.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>().Where(o => o.tileObjectType.IsDemonicStructureTileObject()).Distinct())
+					foreach (TileObject o in portal.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>().Where(o => o.tileObjectType.IsDemonicStructureTileObject() || o.tileObjectType == TILE_OBJECT_TYPE.BLOCK_WALL).Distinct())
 					{
-						o.traitContainer.RemoveStatusAndStacks(o, "Burning");
-						o.traitContainer.RemoveStatusAndStacks(o, "Poisoned");
+						foreach (string status in new[] { "Burning", "Poisoned", "Frozen", "Freezing", "Wet", "Zapped" })
+						{
+							o.traitContainer.RemoveStatusAndStacks(o, status);
+						}
+						o.AdjustHP(o.maxHP - o.currentHP, ELEMENTAL_TYPE.Normal);
+					}
+					portal.AdjustHP(portal.maxHP - portal.currentHP);
+				});
+			}
+			// A frozen explosion the way the game makes one: a demon freezes a wolf next to the
+			// Portal, then zaps it (the explosion itself names nobody, only isPlayerSource).
+			const string frozenName = "your side's frozen explosions leave your Portal alone";
+			int[] frozenLost = new int[2];
+			string frozenWhy = null;
+			for (int i = 0; i < 2 && demon != null; i++)
+			{
+				bool fixOn = i == 0;
+				List<LocationGridTile> around = new List<LocationGridTile>();
+				core.gridTileLocation.PopulateTilesInRadius(around, 2, 0, includeCenterTile: false, includeTilesInDifferentStructure: true);
+				LocationGridTile spot = around.FirstOrDefault(t => !t.isOccupied && t.IsPassable() && t.structure != portal);
+				if (spot == null)
+				{
+					frozenWhy = "no free tile within 2 of the Portal's core";
+					break;
+				}
+				int before = portal.currentHP;
+				Summon wolf = Guard($"freeze and zap a wolf by the Portal (fix {(fixOn ? "on" : "off")})", () =>
+				{
+					PlusBridge.SetConfig("friendlyExplosionsSpareBuildings", fixOn);
+					Summon s = CharacterManager.Instance.CreateNewSummon(SUMMON_TYPE.Wolf, FactionManager.Instance.wildMonsterFaction, homeLocation: null,
+						homeRegion: GridMap.Instance.mainRegion, homeStructure: null, className: "", bypassIdeologyChecking: true);
+					s.CreateMarker();
+					s.InitialCharacterPlacement(spot);
+					s.marker.UpdatePosition();
+					s.traitContainer.AddTrait(s, "Frozen", demon);
+					s.traitContainer.AddTrait(s, "Zapped", demon);
+					return s;
+				});
+				yield return WaitGameHours(0.5f, null);
+				frozenLost[fixOn ? 1 : 0] = before - portal.currentHP;
+				Log($"  frozen explosion (fix {(fixOn ? "on" : "off")}): wolf at {spot.localPlace} frozen now={wolf?.traitContainer.HasTrait("Frozen")} dead={wolf?.isDead}; portal lost {before - portal.currentHP}");
+				Try("remove the wolf, heal and clean the Portal", () =>
+				{
+					if (wolf != null && !wolf.isDead)
+					{
+						wolf.Death("autotest");
+					}
+					foreach (TileObject o in portal.tiles.Select(t => t.tileObjectComponent.objHere).OfType<TileObject>().Where(o => o.tileObjectType.IsDemonicStructureTileObject() || o.tileObjectType == TILE_OBJECT_TYPE.BLOCK_WALL).Distinct())
+					{
+						foreach (string status in new[] { "Burning", "Poisoned", "Frozen", "Freezing", "Wet", "Zapped" })
+						{
+							o.traitContainer.RemoveStatusAndStacks(o, status);
+						}
 						o.AdjustHP(o.maxHP - o.currentHP, ELEMENTAL_TYPE.Normal);
 					}
 					portal.AdjustHP(portal.maxHP - portal.currentHP);
@@ -3930,6 +3981,14 @@ namespace RuinarchDebug
 			else
 			{
 				Check(name, () => (lost[1] == 0, $"explosion {who}: vanilla lost {lost[0]} HP, with the fix {lost[1]}; portal hp now {portal.currentHP}/{portal.maxHP}"));
+			}
+			if (demon == null || frozenWhy != null || frozenLost[0] <= 0)
+			{
+				Skip(frozenName, demon == null ? "no demon to freeze and zap with" : frozenWhy ?? $"the vanilla frozen explosion did not reach the Portal either (lost {frozenLost[0]})");
+			}
+			else
+			{
+				Check(frozenName, () => (frozenLost[1] == 0, $"frozen and zapped {who}: vanilla lost {frozenLost[0]} HP, with the fix {frozenLost[1]}; portal hp now {portal.currentHP}/{portal.maxHP}"));
 			}
 		}
 
