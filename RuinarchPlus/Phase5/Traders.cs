@@ -15,13 +15,15 @@ namespace RuinarchPlus.Phase5
 	/// with <c>tradeAmount</c> food to the village that needs it most: hungry (in famine, or a
 	/// fifth starving) or short of food (under 10 per villager). The trader carries the food
 	/// with the game's own haul job (<c>HAUL</c> / <c>DEPOSIT_RESOURCE_PILE</c>) into that
-	/// village's main storage, and then goes home.
+	/// village's main storage, and then goes home. The haul ranks as the game's own visit to
+	/// another village (1000): at the game's 700 it waits behind every work job (farming and
+	/// gathering rank 920), and a Farmer sent off was still at home a day later.
 	/// - Only between villages whose factions are not hostile (none between enemies).
 	/// - Not to or from a village under curfew (Phase2/ClosedBorders).
 	/// - Traders carry news (Phase 3): arriving, they tell the village's people every demonic
 	///   building they know of, and hear what that village knows (they carry it home).
 	/// A trip under way is not saved: after a load the food still arrives (the haul job is the
-	/// game's), without the announcement or the news.
+	/// game's, at its own rank again), without the announcement or the news.
 	/// </summary>
 	internal static class Traders
 	{
@@ -35,6 +37,21 @@ namespace RuinarchPlus.Phase5
 		}
 
 		private static readonly Dictionary<Character, Trip> Trips = new Dictionary<Character, Trip>();
+
+		/// <summary>Rank of a trader's haul: the game's <c>VISIT_DIFFERENT_VILLAGE</c>.</summary>
+		private const int TripPriority = 1000;
+
+		// Queues the trader's haul of the goods to the village's main storage, at TripPriority.
+		private static bool QueueHaul(Character c, ResourcePile goods, NPCSettlement to)
+		{
+			c.jobComponent.TryCreateHaulJob(goods, to.mainStorage, out JobQueueItem haul);
+			if (haul == null)
+			{
+				return false;
+			}
+			haul.SetPriority(TripPriority);
+			return c.jobQueue.AddJobInQueue(haul);
+		}
 
 		internal static bool Enabled => RuinarchPlusConfig.Current.tradeEnabled;
 
@@ -107,6 +124,7 @@ namespace RuinarchPlus.Phase5
 				.Where(c => c != from.ruler && !c.isFactionLeader && c.hasMarker && c.limiterComponent.canMove && c.limiterComponent.canPerform
 					&& !c.partyComponent.hasParty && c.carryComponent.isBeingCarriedBy == null && !c.needsComponent.isStarving
 					&& !c.traitContainer.HasTrait("Enslaved") && !c.jobQueue.HasJob(JOB_TYPE.HAUL) && !Trips.ContainsKey(c) && !Hunters.IsHunting(c) && !Phase4.LifeCycle.IsChild(c)
+					&& !Phase6.NightWatch.IsGuard(c)
 					&& (destination == null || c.movementComponent.HasPathToEvenIfDiffRegion(destination)))
 				.OrderByDescending(c => c.characterClass.className == "Merchant").FirstOrDefault();
 			ResourcePile goods = trader == null ? null : TakeFood(from, amount);
@@ -117,8 +135,7 @@ namespace RuinarchPlus.Phase5
 			// The goods are the trader's until delivered: the game's haulers and stockpile
 			// combiners only take piles nobody owns, so nobody else carries them off.
 			goods.SetCharacterOwner(trader);
-			trader.jobComponent.TryCreateHaulJob(goods, to.mainStorage, out JobQueueItem haul);
-			if (haul == null || !trader.jobQueue.AddJobInQueue(haul))
+			if (!QueueHaul(trader, goods, to))
 			{
 				goods.SetCharacterOwner(null);
 				return null;
@@ -190,8 +207,7 @@ namespace RuinarchPlus.Phase5
 				if (c != null && !c.isDead && goods != null && goods.gridTileLocation != null && goods.isBeingCarriedBy == null && trip.Resumed < 3
 					&& MayTrade(trip.From, trip.To))
 				{
-					c.jobComponent.TryCreateHaulJob(goods, trip.To.mainStorage, out JobQueueItem haul);
-					if (haul != null && c.jobQueue.AddJobInQueue(haul))
+					if (QueueHaul(c, goods, trip.To))
 					{
 						trip.Resumed++;
 						continue;

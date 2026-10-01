@@ -130,7 +130,9 @@ namespace RuinarchPlus.Phase6
 			List<Character> named = new List<Character>();
 			if (guards.Count < want)
 			{
-				foreach (Character c in s.residents.Where(c => CanGuard(s, c) && !GuardOf.ContainsKey(c))
+				// Not someone away on the village's errands (a hunt, a trade trip): they would
+				// start the watch away from home. Those errands in turn never take a guard.
+				foreach (Character c in s.residents.Where(c => CanGuard(s, c) && !GuardOf.ContainsKey(c) && !Phase5.Hunters.IsHunting(c) && !Phase5.Traders.IsTrading(c))
 					.OrderByDescending(c => c.TryGetTalentLevel(CHARACTER_TALENT.Martial_Arts)).ThenBy(_ => UnityEngine.Random.value).Take(want - guards.Count).ToList())
 				{
 					guards.Add(c);

@@ -73,7 +73,7 @@ night watch). These change the game by default; each one can be switched off in
 
 | Feature | What you'll notice |
 |---------|--------------------|
-| **Night watch** | The game watches its villages by day (the morning patrol) but never at night. Now a Town or City (or a capital) with at least four fighters keeps a night watch: one guard for every eight residents, up to three, its best fighters, never the ruler. Guards sleep by day and at night walk the village ready to fight, so a monster or a demon that slips in after dark meets someone awake. A guard who dies, leaves or is needed elsewhere is replaced. Switch off with `nightWatchEnabled`. |
+| **Night watch** | The game watches its villages by day (the morning patrol) but never at night. Now a Town or City (or a capital) with at least four fighters keeps a night watch: one guard for every eight residents, up to three, its best fighters, never the ruler. Guards sleep by day and at night walk the village ready to fight, so a monster or a demon that slips in after dark meets someone awake. Guards are never sent hunting or trading. A guard who dies, leaves or is needed elsewhere is replaced. Switch off with `nightWatchEnabled`. |
 
 ## Optional QOL (config)
 

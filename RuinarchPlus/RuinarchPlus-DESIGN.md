@@ -586,7 +586,9 @@ knowledge).
    villager (a Merchant first) with a pile of `tradeAmount` food (split off its storage) on
    the game's own `HAUL` / `DEPOSIT_RESOURCE_PILE` job to the neediest village (hungry, or
    under 10 food per villager) whose faction is not hostile; never to or from a village
-   under curfew. The goods are owned by the trader until delivered (`SetCharacterOwner`: the
+   under curfew. The haul ranks 1000, the game's own `VISIT_DIFFERENT_VILLAGE` (at the
+   game's 700 it waits behind every work job, 920 for farming and gathering: a Farmer sent
+   off was still at home a day later). The goods are owned by the trader until delivered (`SetCharacterOwner`: the
    game's haulers and stockpile combiners skip owned piles; before this, other villagers
    carried the trader's pile off), and a trader called away puts them down and picks them up
    again up to 3 times. On delivery (postfix `DepositResourcePile.AfterDepositSuccess`) it is
@@ -618,10 +620,14 @@ warfare is short-lived, partly because populations are tiny (Phases 4 and 5).
 - **Night watch: shipped** (`Phase6/NightWatch.cs`, config `nightWatchEnabled`, spec
   `docs/specs/2026-09-29-night-watch-design.md`). A Town or City (capitals included) with 4+
   fighters keeps one guard per 8 residents (1 to 3): combatants, never the ruler or faction
-  leader, nobody in an active party, best Martial Arts first. A postfix on
+  leader, nobody in a party, best Martial Arts first. A postfix on
   `DailyScheduleComponent.UpdateDailySchedule` gives guards the game's `NocturnalSchedule`;
   hourly, a guard at home in their work hours (22:00 to 9:00) gets the game's
   `NightPatrolBehaviour` (aggressive patrol of village structures), removed outside them.
+  The behaviour and its `PATROL` jobs rank 850 (the game's 200 and 450 lost to visits and
+  never ran: a queued job only runs when it ranks at least as high as the highest behaviour).
+  Hunters and traders are never picked from the guards, and a villager away hunting or
+  trading is not named a guard (a guard sent off as a trader once left a City unwatched).
   Saved in `ModData/ruinarch.plus.watch.json`. *(verification pending)*
 - **Levies [L]:** a nation at war calls fighters up; they march off-region, and
   win/lose/die (feeding Phase 4 population).

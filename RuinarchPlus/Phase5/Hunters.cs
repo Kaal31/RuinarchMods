@@ -132,7 +132,7 @@ namespace RuinarchPlus.Phase5
 			List<Character> hunters = s.residents
 				.Where(c => c != null && !c.isDead && c.isNormalCharacter && c.race.IsSapient() && c.hasMarker && c.limiterComponent.canMove && c.limiterComponent.canPerform
 					&& c.characterClass.IsCombatant() && (!c.partyComponent.hasParty || !c.partyComponent.currentParty.isActive) && c.carryComponent.isBeingCarriedBy == null && !Out.ContainsKey(c)
-					&& !c.jobQueue.HasJob(JOB_TYPE.HUNT_PREY) && !c.traitContainer.HasTrait("Enslaved"))
+					&& !c.jobQueue.HasJob(JOB_TYPE.HUNT_PREY) && !c.traitContainer.HasTrait("Enslaved") && !Phase6.NightWatch.IsGuard(c))
 				.OrderByDescending(c => c.characterClass.className == "Hunter")
 				.ToList();
 			int sent = 0;

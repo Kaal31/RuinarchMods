@@ -205,6 +205,8 @@ namespace RuinarchDebug
 		/// <summary>Run the night watch's hourly check now.</summary>
 		internal static void WatchCheck() => WatchType?.GetMethod("Check", Any)?.Invoke(null, null);
 
+		internal static bool IsGuard(Character c) => WatchType?.GetMethod("IsGuard", Any)?.Invoke(null, new object[] { c }) is bool b && b;
+
 		/// <summary>Whether <paramref name="village"/> counts as hungry (sends hunters).</summary>
 		internal static bool IsHungry(NPCSettlement village)
 		{
@@ -221,6 +223,11 @@ namespace RuinarchDebug
 		internal static bool IsHunting(Character c)
 		{
 			return HuntersType?.GetMethod("IsHunting", Any)?.Invoke(null, new object[] { c }) is bool b && b;
+		}
+
+		internal static bool IsTrading(Character c)
+		{
+			return TradersType?.GetMethod("IsTrading", Any)?.Invoke(null, new object[] { c }) is bool b && b;
 		}
 
 		/// <summary>Sends a trader with food from one village to another now; the trader, or null.</summary>
