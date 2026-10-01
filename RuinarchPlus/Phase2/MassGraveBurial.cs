@@ -191,6 +191,22 @@ namespace RuinarchPlus.Phase2
 		}
 	}
 
+	// Quest members otherwise bury where they stand, bypassing the home's graveyard
+	// and Mass Grave policy. Use the same destination routing as a lone villager.
+	[HarmonyPatch(typeof(CharacterJobTriggerComponent), nameof(CharacterJobTriggerComponent.TriggerPersonalBuryInActivePartyJob))]
+	internal static class MassGrave_PartyBury
+	{
+		private static bool Prefix(CharacterJobTriggerComponent __instance, Character targetCharacter)
+		{
+			if (!MassGraveBurial.Enabled || !(__instance.owner?.homeSettlement is NPCSettlement))
+			{
+				return true;
+			}
+			__instance.TriggerPersonalOutsideVillageBuryJob(targetCharacter);
+			return false;
+		}
+	}
+
 	// Vanilla cancels a settlement BURY job unless the village has a Cemetery or the corpse
 	// was a resident. A Mass Grave job stays valid while the pit stands and the corpse still
 	// lies in (or next to) the settlement.

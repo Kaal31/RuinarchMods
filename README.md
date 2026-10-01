@@ -52,6 +52,7 @@ RuinarchPlus/
 RuinarchDebug/
   DebugMenu.cs               in-game overlay
   AutoTest.cs                unattended in-game test harness
+  TemplateSuite.cs           template export, rebuilding, packs and native construction checks
   PlusBridge.cs              reaches Ruinarch+ by reflection (no hard dependency)
 ARCHITECTURE.md              how the three repos fit together
 ```

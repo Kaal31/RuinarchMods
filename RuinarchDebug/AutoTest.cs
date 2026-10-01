@@ -23,7 +23,7 @@ namespace RuinarchDebug
 	/// writes PASS/FAIL lines to <c>Mods/RuinarchDebug/autotest.log</c> (and Player.log),
 	/// then quits the game.
 	/// </summary>
-	public class AutoTest : MonoBehaviour
+	public partial class AutoTest : MonoBehaviour
 	{
 		private const float TimeScale = 4f;
 
@@ -243,6 +243,7 @@ namespace RuinarchDebug
 
 			FreshWorldChecks();
 			// Early, while villagers are out walking; leaves the camera as it found it.
+			if (Runs("TemplateSuite")) { yield return Safe("TemplateSuite", TemplateSuite()); }
 			if (Runs("FireWallTest")) { yield return Safe("FireWallTest", FireWallTest()); }
 			if (Runs("PathLineTest")) { yield return Safe("PathLineTest", PathLineTest()); }
 			if (Runs("ExploitSuite")) { yield return Safe("ExploitSuite", ExploitSuite()); }
@@ -518,6 +519,43 @@ namespace RuinarchDebug
 			}
 			else
 			{
+				// Quest members use a different native trigger. It must obey the same
+				// no-scatter policy as a villager walking past this body alone.
+				Character partyBurier = village.residents.FirstOrDefault(r => r != null && !r.isDead && r.hasMarker
+					&& r.isNormalCharacter && r.race.IsSapient() && !PlusBridge.IsChild(r) && r.limiterComponent.canMove && r.limiterComponent.canPerform);
+				// The native action requires a Cemetery somewhere in the region, even
+				// though an active-party burial ignores it and plants the stone here.
+				if (village.region.GetRandomStructureOfType(STRUCTURE_TYPE.CEMETERY) == null)
+				{
+					NPCSettlement donor = Villages().FirstOrDefault(v => v != village && v.region == village.region && HasRoomFor(v, STRUCTURE_TYPE.CEMETERY));
+					if (donor != null) Guard("build another village's Cemetery for the party burial", () => InstantBuildVanilla(donor, STRUCTURE_TYPE.CEMETERY));
+				}
+				if (village.region.GetRandomStructureOfType(STRUCTURE_TYPE.CEMETERY) == null) partyBurier = null;
+				if (partyBurier != null)
+				{
+					Guard("queue a quest member's burial at the village border", () =>
+					{
+						partyBurier.CancelAllJobs();
+						partyBurier.StopCurrentActionNode("autotest party burial");
+						CharacterManager.Instance.Teleport(partyBurier, border.gridTileLocation);
+						partyBurier.jobComponent.TriggerPersonalBuryInActivePartyJob(border);
+						// Native party burial is idle-priority; normal village work would mask
+						// the regression in this fixture. Let the real burial action run now.
+						JobQueueItem burial = border.allJobsTargetingThis.FirstOrDefault(j => j.originalOwner == partyBurier
+							&& (j.jobType == JOB_TYPE.BURY_IN_ACTIVE_PARTY || j.jobType == JOB_TYPE.BURY));
+						burial?.SetPriority(1000);
+						Log($"  party burial for {border.name}: job={burial?.jobType.ToString() ?? "none"} actor={partyBurier.name}");
+						return partyBurier;
+					});
+				}
+				if (partyBurier != null)
+				{
+					yield return WaitGameHours(6f, () => border.grave != null);
+					Check("no-scatter at the village border (active-party burial path)", () =>
+						(border.grave == null || PlusBridge.IsMassGrave(border.grave.gridTileLocation?.structure),
+						$"burier={partyBurier.name} grave={(border.grave != null)} structure={border.grave?.gridTileLocation?.structure?.structureType}"));
+				}
+				else Skip("no-scatter at the village border (active-party burial path)", "no carrier or no regional Cemetery for the native action");
 				yield return WaitGameHours(6f, () => border.grave != null);
 				Check("no-scatter at the village border (personal burial path)", () =>
 					(border.grave == null || PlusBridge.IsMassGrave(border.grave.gridTileLocation?.structure),
@@ -624,6 +662,25 @@ namespace RuinarchDebug
 			}
 			else
 			{
+				Character residentBurier = village.residents.FirstOrDefault(r => r != null && !r.isDead && r.hasMarker
+					&& r.isNormalCharacter && r.race.IsSapient() && !PlusBridge.IsChild(r) && r.limiterComponent.canMove && r.limiterComponent.canPerform);
+				if (residentBurier != null)
+				{
+					Guard("send a quest member's burial to the built pit", () =>
+					{
+						second.ForceCancelAllJobsTargetingThisCharacter(JOB_TYPE.BURY);
+						second.ForceCancelAllJobsTargetingThisCharacter(JOB_TYPE.BURY_IN_ACTIVE_PARTY);
+						residentBurier.CancelAllJobs();
+						residentBurier.StopCurrentActionNode("autotest party burial to pit");
+						CharacterManager.Instance.Teleport(residentBurier, second.gridTileLocation);
+						residentBurier.jobComponent.TriggerPersonalBuryInActivePartyJob(second);
+						JobQueueItem burial = second.allJobsTargetingThis.FirstOrDefault(j => j.originalOwner == residentBurier
+							&& (j.jobType == JOB_TYPE.BURY_IN_ACTIVE_PARTY || j.jobType == JOB_TYPE.BURY));
+						burial?.SetPriority(1000);
+						Log($"  party burial for {second.name}: job={burial?.jobType.ToString() ?? "none"} actor={residentBurier.name}");
+						return residentBurier;
+					});
+				}
 				yield return WaitGameHours(48f, () => second.grave != null || !second.hasMarker);
 				// The game's own planner may have built a Cemetery meanwhile: then the body rightly
 				// goes there (vanilla burial), and there is nothing of the pit's to check.
@@ -1258,6 +1315,7 @@ namespace RuinarchDebug
 					Check("a Town Hall under construction is still one after the save loads", () =>
 						(PlusBridge.HasPendingTownHall(village), $"pending after load={PlusBridge.HasPendingTownHall(village)}"));
 				}
+				Log("  Town Hall build prerequisites: " + BlueprintState(village));
 				yield return WaitGameHours(120f - (GameHours - start), () => PlusBridge.TownHallFor(village) != null);
 			}
 			LocationStructure hall = PlusBridge.TownHallFor(village);
@@ -1525,11 +1583,14 @@ namespace RuinarchDebug
 			List<string> blueprints = village.areas.SelectMany(a => a.gridTileComponent.gridTiles)
 				.Select(t => t.tileObjectComponent.genericTileObject)
 				.Where(g => g != null && g.blueprintOnTile != null)
-				.Select(g => $"{g.blueprintOnTile.structureType}@{g.gridTileLocation.localPlace}").ToList();
+				.Select(g => $"{g.blueprintOnTile.structureType}@{g.gridTileLocation.localPlace} cost={g.blueprintOnTile.craftCost} {g.blueprintOnTile.thinWallResource.GetResourceForWall()} started={g.hasStartedBuildingBlueprintOnTile}").ToList();
 			List<JobQueueItem> jobs = new List<JobQueueItem>();
 			village.PopulateJobsOfType(jobs, JOB_TYPE.BUILD_BLUEPRINT);
 			int taverns = village.structures.TryGetValue(STRUCTURE_TYPE.TAVERN, out List<LocationStructure> t2) ? t2.Count(s => !s.hasBeenDestroyed) : 0;
-			return $"blueprints=[{string.Join(", ", blueprints)}] buildJobs={jobs.Count} (taken {jobs.Count(j => j.assignedCharacter != null)}) taverns={taverns}";
+			LocationGridTile buildTile = jobs.Select(j => j.poiTarget?.gridTileLocation).FirstOrDefault(t => t != null);
+			string workers = string.Join("; ", village.residents.Where(r => r != null && !r.isDead).Select(r =>
+				$"{r.name}: job={r.currentJob?.jobType.ToString() ?? "none"} action={r.currentActionNode?.goapName ?? "none"} move={r.limiterComponent.canMove} perform={r.limiterComponent.canPerform} party={r.partyComponent.hasParty} path={(buildTile != null && r.gridTileLocation != null && r.movementComponent.HasPathToEvenIfDiffRegion(buildTile))}"));
+			return $"blueprints=[{string.Join(", ", blueprints)}] buildJobs={jobs.Count} (taken {jobs.Count(j => j.assignedCharacter != null)}) taverns={taverns} accessWood={village.settlementJobTriggerComponent.HasAccessToResource(RESOURCE.WOOD)} accessStone={village.settlementJobTriggerComponent.HasAccessToResource(RESOURCE.STONE)} workers=[{workers}]";
 		}
 
 		// Phase 5: famine. One village's villagers are kept starving (fullness held at 5, as
@@ -1811,7 +1872,7 @@ namespace RuinarchDebug
 				else Check("the new ruler keeps the rule", () => (village.ruler == newRuler, $"ruler now {village.ruler?.name ?? "none"} (was {newRuler.name})"));
 			}
 
-			// 4. An uprising the ruler puts down: one hurt challenger against a loyal village.
+			// 4. Exercise the defeated-rebel branch, without relying on random combat rolls.
 			if (newRuler == null || newRuler.isDead || newRuler != village.ruler)
 			{
 				Skip("a ruler who knocks the rebels out keeps the rule", "no new ruler to test with");
@@ -1836,7 +1897,6 @@ namespace RuinarchDebug
 							int now = c.relationshipContainer.GetTotalOpinion(newRuler);
 							c.relationshipContainer.AdjustOpinion(c, newRuler, "Autotest", (c == rebel ? -300 : 300) - now, "autotest", createJobsOnReduce: false);
 						}
-						rebel.AdjustHP(-(rebel.currentHP - Math.Max(1, rebel.maxHP / 5)), ELEMENTAL_TYPE.Normal);
 						return rebel;
 					});
 					// Everyone home, so the loyal side is there to stand by the ruler.
@@ -1852,25 +1912,20 @@ namespace RuinarchDebug
 							CharacterManager.Instance.Teleport(rebel, square);
 						}
 						PlusBridge.SetUnrest(village, Math.Max(PlusBridge.UnrestPoints(village), uprisingAt));
-						if (!rebel.isDead && rebel.currentHP > Math.Max(1, rebel.maxHP / 5))
-						{
-							rebel.AdjustHP(-(rebel.currentHP - Math.Max(1, rebel.maxHP / 5)), ELEMENTAL_TYPE.Normal);
-						}
 						return PlusBridge.HasUprising(village);
 					});
 					bool rose2 = PlusBridge.HasUprising(village);
-					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(village));
-					// Only those in the village and able to act take a side: with none standing by
-					// the ruler (asleep, knocked out, away), the brawl is one on one, the game's own.
-					string rising = ModsLogLineSince(riseMark4, $"leads an uprising against {newRuler.name} in {village.name}!");
-					if (village.ruler != newRuler && rising != null && rising.Contains(", 0 stand by them.)"))
+					bool knockedOut = rose2 && Guard("knock out the challenger", () =>
 					{
-						Skip("a ruler who knocks the rebels out keeps the rule", $"nobody stood by the ruler, who lost the fight alone: {rising}");
-					}
-					else CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
-						(rose2 && village.ruler == newRuler && (ModsLogHas($"{newRuler.name} has put down the uprising in {village.name}") || ModsLogHas($"The uprising in {village.name} has failed"))
+						rebel.traitContainer.AddTrait(rebel, "Unconscious");
+						return rebel.traitContainer.HasTrait("Unconscious") ? rebel : null;
+					}) != null;
+					yield return WaitGameHours(14f, () => !PlusBridge.HasUprising(village));
+					CheckAlive(newRuler, "a ruler who knocks the rebels out keeps the rule", () =>
+						(rose2 && knockedOut && village.ruler == newRuler
+							&& ModsLogHasSince(riseMark4, $"{newRuler.name} has put down the uprising in {village.name}")
 							&& newRuler.relationshipContainer.HasGrudgeAgainst(rebel),
-						$"rose={rose2} ruler={village.ruler?.name} (was {newRuler.name}); challenger {rebel.name} unconscious={rebel.traitContainer.HasTrait("Unconscious")} grudge={newRuler.relationshipContainer.HasGrudgeAgainst(rebel)}"));
+						$"rose={rose2} knockedOut={knockedOut} ruler={village.ruler?.name} (was {newRuler.name}); challenger {rebel.name} grudge={newRuler.relationshipContainer.HasGrudgeAgainst(rebel)}"));
 				}
 			}
 			foreach (NPCSettlement v in Villages())
@@ -2010,6 +2065,7 @@ namespace RuinarchDebug
 			const string plotCheck = "a plot kills the ruler: unseen, the leader rules; seen, the leader is wanted";
 			NPCSettlement av = villages.FirstOrDefault(v => AdultsAtHome(v).Count(c => c != v.ruler) >= 3) ?? villages[0];
 			Character aRuler = av.ruler;
+			int plotMark = ModsLogLength();
 			yield return RiseAs(av, "Assassination", c => true, hurtRuler: false);
 			Character plotter = PlusBridge.UprisingLeader(av);
 			if (PlusBridge.UprisingKind(av) != "Assassination" || plotter == null)
@@ -2027,6 +2083,10 @@ namespace RuinarchDebug
 				if (!aRuler.isDead && ModsLogHas($"The plot against {aRuler.name} in {av.name} has failed."))
 				{
 					Skip(plotCheck, "the plot failed: " + detail);
+				}
+				else if (aRuler.isDead && ModsLogHasSince(plotMark, $"{aRuler.name} died before the plot against them in {av.name} came to anything."))
+				{
+					Skip(plotCheck, "the ruler died before the assassination: " + detail);
 				}
 				else Check(plotCheck, () => ((unseen && aRuler.isDead && av.ruler == plotter && !wanted) || (seen && aRuler.isDead && av.ruler != plotter && wanted), detail));
 			}
@@ -4272,6 +4332,7 @@ namespace RuinarchDebug
 			// time: that is the same action, and it counts.
 			Func<TileObject, Character> writingAt = t => t == null ? null : village.residents.FirstOrDefault(r => r != null && !r.isDead
 				&& r.currentActionNode?.goapType == writeType && r.currentActionNode.poiTarget == t);
+			Character scribe() => writer != null && !writer.isDead ? writer : village.residents.FirstOrDefault(able);
 
 			// 1. A Write job at the household's carrier: the villager walks there, writes for an
 			// hour, and the carrier's Logs tab says so; a household without a record starts one.
@@ -4331,13 +4392,13 @@ namespace RuinarchDebug
 				string saved = null;
 				yield return SaveAndRead("ruinarch.plus.records.json", (j, e) => saved = j);
 				yield return WaitGameHours(3f, () => PlusBridge.RecordOf(house)?.Contains(portal) == true);
-				Check(savedWriting, () =>
+				CheckAlive(savingWriter, savedWriting, () =>
 					(saved != null && PlusBridge.RecordOf(house)?.Contains(portal) == true, $"saved={saved != null} record={record(house)}"));
 			}
 
 			// 3. Nobody told to: in their free time, a villager at home writes what the
 			// household's record lacks (any household of the village: they all remember now).
-			Guard("empty the records; the village still remembers", () => { PlusBridge.ForgetRecords(faction); PlusBridge.RememberAtHome(writer, portal); return writer; });
+			Guard("empty the records; the village still remembers", () => { PlusBridge.ForgetRecords(faction); PlusBridge.RememberAtHome(scribe(), portal); return writer; });
 			mark = ModsLogLength();
 			Func<List<LocationStructure>> writtenHomes = () => (village.structures.TryGetValue(STRUCTURE_TYPE.DWELLING, out List<LocationStructure> ds) ? ds : new List<LocationStructure>())
 				.Where(d => PlusBridge.RecordOf(d)?.Contains(portal) == true).ToList();
@@ -4351,9 +4412,10 @@ namespace RuinarchDebug
 			// only this household keeps a record: a Read job gives it back.
 			Guard("leave only this household's record, and nobody who remembers", () =>
 			{
+				Character s = scribe();
 				PlusBridge.ForgetRecords(faction);
-				PlusBridge.RememberAtHome(writer, portal);
-				PlusBridge.WriteRecord(writer, house);
+				PlusBridge.RememberAtHome(s, portal);
+				PlusBridge.WriteRecord(s, house);
 				PlusBridge.ForgetMemory(faction);
 				return house;
 			});
@@ -4364,7 +4426,7 @@ namespace RuinarchDebug
 				yield return WaitGameHours(6f, () => PlusBridge.Remembers(reader, portal));
 				yield return WaitGameHours(0.1f, null);
 			}
-			Check("a household member who does not remember reads it back", () =>
+			CheckAlive(reader, "a household member who does not remember reads it back", () =>
 				(PlusBridge.Remembers(reader, portal) && LogsOf(readAt, read).Count > 0 && LogsOf(reader, read).Count > 0,
 				$"remembers={PlusBridge.Remembers(reader, portal)} record={record(house)} carrier {describeCarrier(readAt)}; reader's lines {LogsOf(reader, read).Count}; reader in {reader.currentStructure?.name ?? "the wild"}"));
 
@@ -4373,9 +4435,10 @@ namespace RuinarchDebug
 			List<TileObject> burned = null;
 			Guard("destroy every carrier while nobody remembers", () =>
 			{
+				Character s = scribe();
 				PlusBridge.ForgetRecords(faction);
-				PlusBridge.RememberAtHome(writer, portal);
-				PlusBridge.WriteRecord(writer, house);
+				PlusBridge.RememberAtHome(s, portal);
+				PlusBridge.WriteRecord(s, house);
 				PlusBridge.ForgetMemory(faction);
 				burned = PlusBridge.CarriersOf(house);
 				foreach (TileObject t in burned)
@@ -4388,7 +4451,7 @@ namespace RuinarchDebug
 			SendInto(reader, house);
 			yield return WaitGameHours(2.05f, null);
 			PlusBridge.SetConfig("readChance", 0);
-			Check("destroying every carrier takes the record; nobody reads from it afterwards", () =>
+			CheckAlive(reader, "destroying every carrier takes the record; nobody reads from it afterwards", () =>
 				(burned?.Count > 0 && PlusBridge.RecordOf(house) == null && !PlusBridge.Remembers(reader, portal),
 				$"destroyed {burned?.Count ?? 0}: [{string.Join(", ", (burned ?? new List<TileObject>()).Select(t => $"{t.name} hp={t.currentHP} on {t.gridTileLocation?.localPlace.ToString() ?? "nothing"}"))}] record={record(house)} reader remembers={PlusBridge.Remembers(reader, portal)}"));
 
@@ -4449,7 +4512,6 @@ namespace RuinarchDebug
 					$"record={record(library)} carrier {describeCarrier(libCarrier)}; writer in {writer.currentStructure?.name ?? "the wild"} doing {writer.currentActionNode?.goapName ?? "nothing"}"));
 				// The record is planted by someone alive: the writer, or (if the world killed them)
 				// any free villager (Knowledge.Read and Records.Write refuse the dead).
-				Character scribe() => writer != null && !writer.isDead ? writer : village.residents.FirstOrDefault(able);
 				Guard("leave only the Library's record, and nobody who remembers", () =>
 				{
 					Character s = scribe();
