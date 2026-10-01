@@ -2056,6 +2056,12 @@ namespace RuinarchDebug
 					{
 						Skip(jailCheck, "the ruler won the brawl: " + detail);
 					}
+					// Killed before anyone could tie them up (a villager in a rage once struck
+					// the ruler dead in the brawl): there is nobody to jail.
+					else if (!overthrown && old.isDead)
+					{
+						Skip(jailCheck, $"the ruler died first ({old.deathLog?.logText ?? old.causeOfDeath.ToString()}): " + detail);
+					}
 					else if (overthrown && delivered && !stillHeld && friends > 0 && ModsLogHas($"{old.name}, once ruler of {jv.name}, has escaped the prison."))
 					{
 						Skip(jailCheck, "a friend freed them: " + detail);
@@ -2343,6 +2349,7 @@ namespace RuinarchDebug
 			if (trader != null)
 			{
 				Log($"  trader set out: {Busy(trader)}");
+				int tripMark = ModsLogLength();
 				yield return WaitGameHours(30f, () => ModsLogHas($"brought 40 food to {to.name}") || trader.isDead);
 				if (trader.isDead && !ModsLogHas($"{trader.name} of {from.name} brought 40 food to {to.name}"))
 				{
@@ -2353,7 +2360,7 @@ namespace RuinarchDebug
 				}
 				else Check("the trader brings the food to the other village", () =>
 					(ModsLogHas($"{trader.name} of {from.name} brought 40 food to {to.name}"),
-					$"{Busy(trader)} dead={trader.isDead} carrying={trader.carryComponent.carriedPOI?.name ?? "nothing"} haul={trader.jobQueue.HasJob(JOB_TYPE.HAUL)}"));
+					$"{Busy(trader)} dead={trader.isDead} carrying={trader.carryComponent.carriedPOI?.name ?? "nothing"} haul={trader.jobQueue.HasJob(JOB_TYPE.HAUL)}; {ModsLogLineSince(tripMark, $"The trip of {trader.name} from") ?? "the trip has not ended"}"));
 				if (news && trader.isAlliedWithPlayer)
 				{
 					// Demon cultists keep the player's secrets (Knowledge.Counts).

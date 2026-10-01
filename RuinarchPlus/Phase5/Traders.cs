@@ -215,8 +215,13 @@ namespace RuinarchPlus.Phase5
 				}
 				Trips.Remove(c);
 				goods?.SetCharacterOwner(null);
+				// Whoever took the goods into their inventory (an item there has no tile and no
+				// carrier), for the log.
+				Character holder = goods == null || goods.gridTileLocation != null ? null
+					: CharacterManager.Instance.allCharacters.FirstOrDefault(x => x != null && x.items != null && x.items.Contains(goods));
 				RuinarchPlus.Log?.Info($"The trip of {c?.name} from {trip.From.name} to {trip.To.name} ended before the food arrived"
-					+ $" (trader dead={c?.isDead}; food {goods?.resourceInPile} at {goods?.gridTileLocation?.structure?.name ?? "nowhere"} carriedBy={goods?.isBeingCarriedBy?.name ?? "-"}; resumed {trip.Resumed} time(s)).");
+					+ $" (trader dead={c?.isDead}; food {goods?.resourceInPile} at {goods?.gridTileLocation?.structure?.name ?? "nowhere"} carriedBy={goods?.isBeingCarriedBy?.name ?? "-"}"
+					+ $" in the inventory of {holder?.name ?? "nobody"}{(holder != null ? $" (job {holder.currentJob?.jobType.ToString() ?? "none"})" : "")}; resumed {trip.Resumed} time(s)).");
 			}
 		}
 	}
