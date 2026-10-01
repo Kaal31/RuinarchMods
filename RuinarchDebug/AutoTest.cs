@@ -1570,11 +1570,33 @@ namespace RuinarchDebug
 					c.needsComponent.SetFullness(5f);
 				}
 			};
+			// The famine clock only runs with three or more villagers inside (Famine: a few
+			// starving out in the wild do not put their home in famine). Search parties and
+			// errands take them away (in one small village, two were out for 11 of the 20
+			// hours), so bring them home, out of any party, whenever fewer are inside.
+			Action keepHome = () =>
+			{
+				if (PlusBridge.FamineCount(village).villagers >= 3)
+				{
+					return;
+				}
+				LocationGridTile home = village.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? village.cityCenter.tiles.First();
+				foreach (Character c in people.Where(c => !c.isDead && c.homeSettlement == village && c.hasMarker && c.carryComponent.isBeingCarriedBy == null
+					&& !c.traitContainer.HasTrait("Restrained") && (c.gridTileLocation == null || !c.gridTileLocation.IsPartOfSettlement(village))).ToList())
+				{
+					if (c.partyComponent.hasParty)
+					{
+						c.partyComponent.currentParty.RemoveMember(c);
+					}
+					CharacterManager.Instance.Teleport(c, home);
+				}
+			};
 
 			float start = GameHours;
 			int loggedHour = -1;
 			yield return WaitGameHours(20f, () =>
 			{
+				keepHome();
 				starve();
 				if ((int)(GameHours - start) != loggedHour)
 				{
@@ -4097,7 +4119,20 @@ namespace RuinarchDebug
 			{
 				LocationGridTile home = listener.homeSettlement.cityCenter.passableTiles.FirstOrDefault(t => !t.isOccupied) ?? listener.homeSettlement.cityCenter.passableTiles.FirstOrDefault();
 				Guard("send the listener home", () => { CharacterManager.Instance.Teleport(listener, home); return listener; });
-				yield return WaitGameHours(3f, () => PlusBridge.Knows(listeners, portal));
+				// Telling is hourly and needs them in the village: one who walks out again before
+				// the hour (a job elsewhere, a party) is brought back, as the witness is above.
+				yield return WaitGameHours(3f, () =>
+				{
+					if (!listener.isDead && listener.gridTileLocation != null && !listener.gridTileLocation.IsPartOfSettlement(listener.homeSettlement))
+					{
+						if (listener.partyComponent.hasParty)
+						{
+							listener.partyComponent.currentParty.RemoveMember(listener);
+						}
+						CharacterManager.Instance.Teleport(listener, home);
+					}
+					return PlusBridge.Knows(listeners, portal) || listener.isDead;
+				});
 				Check("news heard from another faction makes the listener's faction aware", () =>
 					(PlusBridge.Knows(listeners, portal) && listeners.isAwareOfPlayer,
 					$"{listeners.name} knows={PlusBridge.Knows(listeners, portal)} aware={listeners.isAwareOfPlayer}; {listener.name}: dead={listener.isDead} faction={listener.faction?.name ?? "none"} "
