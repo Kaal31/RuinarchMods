@@ -23,3 +23,6 @@ config.json
 !**/*.cs
 !**/mod.json
 !**/art/**
+
+# Implementation plans hold machine-local paths and stay local
+docs/plans/
