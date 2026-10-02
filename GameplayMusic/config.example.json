@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "shuffle": true,
+  "volume": 1.0,
+  "threatReleaseSeconds": 8.0,
+  "summonSeconds": 12.0,
+  "dynamicMusic": true,
+  "minimumMoodSeconds": 12.0,
+  "disasterSeconds": 25.0,
+  "crossfadeSeconds": 3.0
+}

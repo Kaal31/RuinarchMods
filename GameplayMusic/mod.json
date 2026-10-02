@@ -1,0 +1,12 @@
+{
+  "id": "local.gameplaymusic",
+  "name": "Gameplay Music",
+  "version": "1.1.0",
+  "author": "Local",
+  "description": "Play your own background music during gameplay, with smooth transitions that react to world events. Music files are not included.\n\nHOW TO USE\n1. Open Mods/GameplayMusic/Music inside your Ruinarch installation.\n2. Add MP3, OGG or WAV files to these folders:\nAmbient - normal gameplay. Files placed directly in Music also count as ambient.\nThreat - retaliation attacks by angels or nature spirits.\nDisaster - new plague infections and fires spreading to three or more objects.\nSummon - demon minion summoning.\n3. Enable Gameplay Music and restart Ruinarch, then start or load a world.\n\nUse any filenames; no special naming is required. Put tracks directly in the listed folders, without deeper subfolders. Tracks loop and shuffle by default. Empty event folders fall back to ambient; if no usable ambient tracks exist, the original soundtrack resumes. New files are detected during gameplay within about 10 seconds.\n\nThe game's Music Volume and Master Volume sliders control playback. Menu music and sound effects retain their normal behavior. Music continues while paused. Event priority is Threat, Disaster, Summon, then Ambient, with 3-second crossfades and timing limits to avoid rapid switching.\n\nOPTIONS\nClose the game and edit Mods/GameplayMusic/config.json, then restart. Set shuffle to false for filename order within each folder (use 01, 02, etc. to arrange tracks). Set dynamicMusic to false to use only the ambient playlist. Fade lengths, event durations and an extra volume multiplier can also be adjusted. See README.md in the mod folder for details. If a track will not play, check Mods/mods.log or try converting it to OGG or PCM WAV.",
+  "loader": "RuinarchModLoader",
+  "loaderApi": 1,
+  "type": "code",
+  "entryAssembly": "GameplayMusic.dll",
+  "entryType": "GameplayMusic.MusicMod"
+}

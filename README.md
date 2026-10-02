@@ -10,6 +10,18 @@ replaced or recompiled.
 
 ## Mods
 
+### Kaal31 additions
+
+These packages target RuinarchModLoader API 1, including the strict manifest checks in loader 0.6.x. Install the loader separately, extract a ZIP into the game's `Mods` folder, and restart the game. Do not overwrite your music or configuration when updating.
+
+| Mod | Download | What it does |
+| --- | --- | --- |
+| [Gameplay Music 1.1.0](GameplayMusic/README.md) | [Installable ZIP](downloads/GameplayMusic-1.1.0.zip) | Your own ambient and event-driven playlists, with crossfades for retaliation, plague/fire activity and demon summons. No music is included. |
+
+Gameplay Music passes the installed loader's package inspector and 24 music priority/playlist checks. All three game patch targets were checked. Audio playback still needs in-game validation. Co-op is maintained separately on the [coop-world-transfer branch](https://github.com/Kaal31/RuinarchMods/tree/coop-world-transfer). See [download notes and checksums](downloads/README.md).
+
+### Upstream mods
+
 | Mod | What it does |
 |---|---|
 | **[Ruinarch+](RuinarchPlus/README.md)** | The gameplay mod: bug fixes, plus rotting corpses, a Mass Grave village building, a plague curfew that closes a village's borders, factions that only attack what they know about and news that travels on foot and by gossip, villages that search for their missing, migration that follows a village's fortunes, villages that grow into Towns and Cities around a Town Hall, famine and the unrest it brings, hunters and traders. Every feature can be switched off in `config.json`. |
@@ -107,3 +119,4 @@ item's owner, the game closed, and the RuinarchModLoader checkout next to this r
 `RUIN_LOADER_DIR`), built and installed in the game.
 
 This repo holds source only: no game binaries or assets.
+
