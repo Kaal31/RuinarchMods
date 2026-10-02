@@ -512,6 +512,22 @@ namespace RuinarchDebug
 			yield return CurfewTest(village);
 		}
 
+		// Scattering is a tombstone outside any graveyard (the wilderness, a City Center). A
+		// body left lying, laid in the Mass Grave, or buried in a real Cemetery or Cult Temple
+		// (a passer-by from a village with one takes an outsider home: vanilla) is not.
+		private static bool NotScattered(Character corpse)
+		{
+			LocationStructure where = corpse.grave?.gridTileLocation?.structure;
+			return corpse.grave == null || PlusBridge.IsMassGrave(where)
+				|| where?.structureType == STRUCTURE_TYPE.CEMETERY || where?.structureType == STRUCTURE_TYPE.CULT_TEMPLE;
+		}
+
+		private static string GraveWhere(Character corpse)
+		{
+			LocationStructure where = corpse.grave?.gridTileLocation?.structure;
+			return $"grave={(corpse.grave != null)} structure={where?.structureType} of {where?.settlementLocation?.name ?? "no settlement"}";
+		}
+
 		private IEnumerator BareVillageTests(NPCSettlement village)
 		{
 			Log($"test village (no graveyard): {Describe(village)}");
@@ -570,14 +586,11 @@ namespace RuinarchDebug
 				{
 					yield return WaitGameHours(6f, () => border.grave != null);
 					Check("no-scatter at the village border (active-party burial path)", () =>
-						(border.grave == null || PlusBridge.IsMassGrave(border.grave.gridTileLocation?.structure),
-						$"burier={partyBurier.name} grave={(border.grave != null)} structure={border.grave?.gridTileLocation?.structure?.structureType}"));
+						(NotScattered(border), $"burier={partyBurier.name} {GraveWhere(border)}"));
 				}
 				else Skip("no-scatter at the village border (active-party burial path)", "no carrier or no regional Cemetery for the native action");
 				yield return WaitGameHours(6f, () => border.grave != null);
-				Check("no-scatter at the village border (personal burial path)", () =>
-					(border.grave == null || PlusBridge.IsMassGrave(border.grave.gridTileLocation?.structure),
-					$"grave={(border.grave != null)} structure={border.grave?.gridTileLocation?.structure?.structureType}"));
+				Check("no-scatter at the village border (personal burial path)", () => (NotScattered(border), GraveWhere(border)));
 			}
 
 			// 2. The village decides to build a Mass Grave and villagers construct it. The
@@ -1183,7 +1196,8 @@ namespace RuinarchDebug
 			{
 				STRUCTURE_TYPE? where = outsider.grave?.gridTileLocation?.structure?.structureType;
 				bool inPit = !outsider.hasMarker && outsider.grave == null && PlusBridge.HauledTotal > hauledBeforeOutsider;
-				return (inPit, $"hasMarker={outsider.hasMarker} grave={where?.ToString() ?? "-"} hauledDelta={PlusBridge.HauledTotal - hauledBeforeOutsider}");
+				string jobs = string.Join(", ", outsider.allJobsTargetingThis.Select(j => $"{j.jobType} by {j.originalOwner?.name ?? "?"} taken by {j.assignedCharacter?.name ?? "nobody"}"));
+				return (inPit, $"hasMarker={outsider.hasMarker} grave={where?.ToString() ?? "-"} hauledDelta={PlusBridge.HauledTotal - hauledBeforeOutsider} jobs=[{jobs}] pit={PlusBridge.FindFor(village) != null}");
 			});
 		}
 
