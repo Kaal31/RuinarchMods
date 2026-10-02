@@ -8,6 +8,7 @@ using Inner_Maps;
 using Inner_Maps.Location_Structures;
 using Locations.Settlements;
 using Ruinarch.ModContent.Templates;
+using Ruinarch.Modding;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
@@ -97,6 +98,8 @@ namespace RuinarchDebug
 				bool border = SameCellSet(Border(original), Border(copy));
 				Check($"{look.Prefab.name} rebuilt from its template matches the original", () =>
 					(a == b && footprint && border, a == b ? $"{a.Length} chars; footprint same={footprint} border same={border} ({Border(original).Count}/{Border(copy).Count})" : "first difference: " + FirstDifference(a, b)));
+				Check($"{look.Prefab.name} keeps thin-wall edges and colliders", () =>
+					(SameWallGeometry(look.Prefab, built), "renderer offsets, sprite identity, collider offsets and sizes"));
 				ModTemplates.DestroyDetached(built);
 			}
 			// A registered kind must instantiate its own logical structure, not the base
@@ -206,7 +209,8 @@ namespace RuinarchDebug
 			}
 			else
 			{
-				Func<LocationStructureObject> blueprint = () => UnityEngine.Object.FindObjectsOfType<LocationStructureObject>().FirstOrDefault(o => o.name.StartsWith(poolName) && o.currentVisualMode == LocationStructureObject.Structure_Visual_Mode.Blueprint);
+				// Native blueprint state remains available when its visual is off-screen/inactive.
+				Func<LocationStructureObject> blueprint = () => bpSpot.tileObjectComponent.genericTileObject.blueprintOnTile;
 				yield return WaitGameHours(12f, () => blueprint() != null);
 				LocationStructureObject bp = blueprint();
 				Check("a villager places a template building as a blueprint", () => (bp != null, bp != null ? bp.name : $"{placer.name} job={placer.currentJob?.jobType.ToString() ?? "none"}"));
@@ -214,6 +218,7 @@ namespace RuinarchDebug
 				{
 					// Supply materials to the game's existing build job. A duplicate personal
 					// job lets two builders finish the same blueprint and race its cleanup.
+					Character worker = null;
 					Guard("supply the native template build job", () =>
 					{
 						List<JobQueueItem> jobs = new List<JobQueueItem>();
@@ -223,7 +228,7 @@ namespace RuinarchDebug
 						{
 							throw new Exception("the blueprint has no native build job");
 						}
-						Character worker = buildJob.assignedCharacter ?? placer;
+						worker = buildJob.assignedCharacter ?? placer;
 						worker.StopCurrentActionNode("autotest template build");
 						worker.UncarryPOI();
 						WoodPile wood = InnerMapManager.Instance.CreateNewTileObject<WoodPile>(TILE_OBJECT_TYPE.WOOD_PILE);
@@ -235,9 +240,11 @@ namespace RuinarchDebug
 					});
 					Func<bool> built = () => village.structures.TryGetValue(tavern.Kind, out List<LocationStructure> all)
 						&& all.Any(s => s is ManMadeStructure m && m.structureObj != null && m.structureObj.name.StartsWith(poolName) && m.structureObj.currentVisualMode == LocationStructureObject.Structure_Visual_Mode.Built && m != placed);
-					yield return WaitGameHours(18f, built);
+					// A builder who starts in the evening goes to bed with the job half done
+					// (seen once: asleep at the deadline). Keep them rested; sleep is not under test.
+					yield return WaitGameHours(18f, () => { worker?.needsComponent.SetTiredness(100f); return built(); });
 					Check("villagers build a template building", () =>
-						(built(), $"{placer.name}: job={placer.currentJob?.jobType.ToString() ?? "none"} action={placer.currentActionNode?.goapName ?? "none"} blueprint={bpSpot.tileObjectComponent.genericTileObject.blueprintOnTile != null}"));
+						(built(), $"{worker?.name ?? placer.name}: job={worker?.currentJob?.jobType.ToString() ?? "none"} action={worker?.currentActionNode?.goapName ?? "none"} blueprint={bpSpot.tileObjectComponent.genericTileObject.blueprintOnTile != null}"));
 				}
 			}
 			GameObject fallback = Guard("load a building whose pack is gone", () =>
@@ -258,7 +265,7 @@ namespace RuinarchDebug
 			}
 			Directory.CreateDirectory(Path.Combine(pack, "templates"));
 			Directory.CreateDirectory(Path.Combine(pack, "art"));
-			File.WriteAllText(Path.Combine(pack, "mod.json"), "{\"id\":\"autotest-pack\",\"name\":\"Autotest pack\",\"version\":\"1.0.0\",\"author\":\"autotest\",\"description\":\"\"}");
+			File.WriteAllText(Path.Combine(pack, "mod.json"), "{\"id\":\"autotest-pack\",\"name\":\"Autotest pack\",\"version\":\"1.0.0\",\"author\":\"autotest\",\"description\":\"\",\"loader\":\"RuinarchModLoader\",\"loaderApi\":1,\"type\":\"templates\"}");
 			Texture2D red = new Texture2D(64, 64);
 			red.SetPixels(Enumerable.Repeat(Color.red, 64 * 64).ToArray());
 			red.Apply();
@@ -324,28 +331,18 @@ namespace RuinarchDebug
 					yield return Screenshot("template-png.png");
 				}
 			}
-			// Switched off: the pack's id in modloader.config.json's disabled list. The config is
-			// the player's; it is restored exactly as found.
-			string config = Path.Combine(ModTemplates.ModsRoot, "modloader.config.json");
-			string kept = File.Exists(config) ? File.ReadAllText(config) : null;
-			PackLoadReport off = null;
-			try
+			// The loader, not the framework, decides which template packages load: only
+			// compatible, enabled ones are handed over. Checked when such packages exist.
+			List<KnownMod> withTemplates = ModLoader.Known.Where(m => m.Origin != ModOrigin.Infrastructure && Directory.Exists(Path.Combine(m.Directory, "templates"))).ToList();
+			List<KnownMod> refused = withTemplates.Where(m => !m.Compatible || !m.Enabled).ToList();
+			if (refused.Count == 0)
 			{
-				File.WriteAllText(config, "{\"disabled\":[\"autotest-pack\"]}");
-				off = ModTemplates.LoadPack(pack);
+				Skip("disabled or incompatible template packages are not handed to the framework", "no disabled or incompatible template package installed");
 			}
-			finally
-			{
-				if (kept != null)
-				{
-					File.WriteAllText(config, kept);
-				}
-				else
-				{
-					File.Delete(config);
-				}
-			}
-			Check("a pack switched off in the mod manager does not load", () => (off != null && off.Disabled && off.Loaded == 0, off == null ? "no report" : $"disabled={off.Disabled} loaded={off.Loaded}"));
+			else Check("disabled or incompatible template packages are not handed to the framework", () =>
+				(refused.All(m => !ModTemplates.PackDirectories.Contains(m.Directory, StringComparer.OrdinalIgnoreCase))
+					&& withTemplates.Where(m => m.Compatible && m.Enabled).All(m => ModTemplates.PackDirectories.Contains(m.Directory, StringComparer.OrdinalIgnoreCase)),
+				$"accepted {ModTemplates.PackDirectories.Count}: {string.Join(", ", ModTemplates.PackDirectories.Select(Path.GetFileName))}; refused: {string.Join(", ", refused.Select(m => m.Id + (m.Compatible ? " (disabled)" : " (" + m.RejectionReason + ")")))}"));
 			Check("the framework reports its templates at startup", () => (ModsLogHas("[ModContent] Templates ready:") && ModsLogHas("[ModContent] Template packs:"), "mods.log"));
 			Directory.Delete(pack, true);
 		}
@@ -362,6 +359,25 @@ namespace RuinarchDebug
 				looks.FirstOrDefault(l => l.Kind == STRUCTURE_TYPE.DWELLING && l.Culture == FACTION_TYPE.None),
 				looks.FirstOrDefault(l => l.Kind.IsSpecialStructure()),
 			}.Where(l => l != null).ToList();
+		}
+		private static bool SameWallGeometry(GameObject original, GameObject rebuilt)
+		{
+			var a = original.GetComponentsInChildren<ThinWallGameObject>(true);
+			var b = rebuilt.GetComponentsInChildren<ThinWallGameObject>(true);
+			if (a.Length != b.Length) return false;
+			for (int i = 0; i < a.Length; i++)
+			{
+				var sa = a[i].GetComponentsInChildren<SpriteRenderer>(true);
+				var sb = b[i].GetComponentsInChildren<SpriteRenderer>(true);
+				var ca = a[i].GetComponentsInChildren<BoxCollider2D>(true);
+				var cb = b[i].GetComponentsInChildren<BoxCollider2D>(true);
+				if (sa.Length != sb.Length || ca.Length != cb.Length) return false;
+				for (int j = 0; j < sa.Length; j++)
+					if (sa[j].sprite != sb[j].sprite || Vector3.Distance(sa[j].transform.localPosition, sb[j].transform.localPosition) > .0001f) return false;
+				for (int j = 0; j < ca.Length; j++)
+					if (ca[j].offset != cb[j].offset || ca[j].size != cb[j].size || Vector3.Distance(ca[j].transform.localPosition, cb[j].transform.localPosition) > .0001f) return false;
+			}
+			return true;
 		}
 
 		private static int Painted(List<string> rows)

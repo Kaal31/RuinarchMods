@@ -3,5 +3,10 @@
     "name": "Ruinarch Debug Menu",
     "version": "1.0.0",
     "author": "Xm0x",
-    "description": "Development tool: an in-game debug overlay (spawn villagers and monsters, kill, set needs, control time, open the game's built-in dev console) and an unattended in-game test harness."
+    "description": "Development tool: an in-game debug overlay (spawn villagers and monsters, kill, set needs, control time, open the game's built-in dev console) and an unattended in-game test harness.",
+    "loader": "RuinarchModLoader",
+    "loaderApi": 1,
+    "type": "code",
+    "entryAssembly": "RuinarchDebug.dll",
+    "entryType": "RuinarchDebug.RuinarchDebug"
 }
