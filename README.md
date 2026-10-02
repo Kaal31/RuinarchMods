@@ -8,6 +8,10 @@ against the decompiled game source in [RuinarchRE](https://github.com/Xm0x/Ruina
 The mods patch the **stock** game at runtime with Harmony. The game's own DLLs are never
 replaced or recompiled.
 
+## Co-op compatibility update
+
+[Download the API 1-compatible co-op preview](downloads/RuinarchCoop-0.1.0.zip). The package includes the rebuilt DLL and a manifest accepted by the current loader. See [installation and validation notes](downloads/README.md).
+
 ## Mods
 
 | Mod | What it does |

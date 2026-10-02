@@ -5,7 +5,12 @@ A host makes a complete stock save (world plus SQLite database), transfers it ov
 TCP, and a guest loads it with the normal game loader. Camera position and zoom
 are local on each PC. Both simulations stay paused throughout the test.
 
-No loader changes are required. This mod targets RuinarchModLoader 0.5.0.
+Updated for RuinarchModLoader API 1 and its strict package manifest checks.
+The package includes `RuinarchCoop.dll`, built against the installed game and loader.
+The installed loader accepts the package, and all nine Harmony target methods were
+checked against the installed game assembly. Two-PC gameplay has not been verified.
+Run `build.ps1 -GameRoot "C:\path\to\Ruinarch"` from PowerShell to rebuild after source changes.
+When installed under the game's `Mods` folder, the GameRoot argument is optional.
 The Co-op entry beside Eradication, live entity replication, guest abilities,
 reconnection, internet lobbies and independent progression are not implemented.
 The temporary **CO-OP TEST** overlay is available at the main menu and in-game.

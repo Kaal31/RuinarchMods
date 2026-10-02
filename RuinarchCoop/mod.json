@@ -3,5 +3,10 @@
   "name": "Ruinarch Co-op: World Transfer Preview",
   "version": "0.1.0",
   "author": "Kaal31",
-  "description": "Experimental LAN world-transfer and independent-camera test. Both worlds remain paused. Live replication and guest abilities are not implemented."
+  "description": "Experimental LAN world-transfer and independent-camera test. Both worlds remain paused. Live replication and guest abilities are not implemented.",
+  "loaderApi": 1,
+  "entryAssembly": "RuinarchCoop.dll",
+  "loader": "RuinarchModLoader",
+  "type": "code",
+  "entryType": "RuinarchCoop.CoopMod"
 }
