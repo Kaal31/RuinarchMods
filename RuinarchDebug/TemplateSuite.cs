@@ -211,9 +211,19 @@ namespace RuinarchDebug
 			{
 				// Native blueprint state remains available when its visual is off-screen/inactive.
 				Func<LocationStructureObject> blueprint = () => bpSpot.tileObjectComponent.genericTileObject.blueprintOnTile;
-				yield return WaitGameHours(12f, () => blueprint() != null);
+				// What the placer did meanwhile, so a missing blueprint says why: never started
+				// the job, lost it from the queue, or performed it without a blueprint appearing.
+				var seen = new List<string>();
+				Func<bool> blueprintPlaced = () =>
+				{
+					string now = placer.isDead ? "dead"
+						: $"{placer.currentJob?.jobType.ToString() ?? "none"}/{placer.currentActionNode?.goapType.ToString() ?? "none"}{(placer.jobQueue.HasJob(JOB_TYPE.PLACE_BLUEPRINT) ? "" : " (no PLACE_BLUEPRINT queued)")}";
+					if (seen.Count == 0 || seen[seen.Count - 1] != now) seen.Add(now);
+					return blueprint() != null;
+				};
+				yield return WaitGameHours(12f, blueprintPlaced);
 				LocationStructureObject bp = blueprint();
-				Check("a villager places a template building as a blueprint", () => (bp != null, bp != null ? bp.name : $"{placer.name} job={placer.currentJob?.jobType.ToString() ?? "none"}"));
+				Check("a villager places a template building as a blueprint", () => (bp != null, bp != null ? bp.name : $"{placer.name} at {bpSpot}: " + string.Join(" > ", seen.Take(12))));
 				if (bp != null)
 				{
 					// Supply materials to the game's existing build job. A duplicate personal

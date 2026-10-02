@@ -1,0 +1,12 @@
+{
+  "id": "ruinarch.workshoppublish",
+  "name": "Workshop publisher (release tool)",
+  "version": "1.0.0",
+  "author": "Xm0x",
+  "description": "Uploads a package as a new version of an existing Workshop item, then quits. Installed for one launch by tools/publish-workshop.sh.",
+  "loader": "RuinarchModLoader",
+  "loaderApi": 1,
+  "type": "code",
+  "entryAssembly": "WorkshopPublish.dll",
+  "entryType": "WorkshopPublish.Publisher"
+}

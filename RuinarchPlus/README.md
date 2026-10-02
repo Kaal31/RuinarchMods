@@ -164,8 +164,8 @@ Edit the file and relaunch for changes to take effect.
 
 ## Install
 
-1. Install the [RuinarchModLoader](https://github.com/Xm0x/RuinarchModLoader/releases), **v0.5.0 or newer** (older versions cannot add Ruinarch+'s Write and Read actions or store its data in your save). Its installer patches your `Assembly-CSharp.dll` and puts `0Harmony.dll` and `Ruinarch.ModContent.dll` (which Ruinarch+ needs) in `Mods/`.
-2. Download `RuinarchPlus-<version>.zip` from the [releases](https://github.com/Xm0x/RuinarchMods/releases) and unzip it into your game's `Mods/` folder, so you get `Mods/RuinarchPlus/`.
+1. Install the [RuinarchModLoader](https://github.com/Xm0x/RuinarchModLoader/releases), **v0.5.0 or newer** (older versions cannot add Ruinarch+'s Write and Read actions or store its data in your save). Its installer patches your `Assembly-CSharp.dll` and puts `0Harmony.dll` and `Ruinarch.ModContent.dll` (which Ruinarch+ needs) in `Mods/`. Loader v0.6.0 and newer need Ruinarch+ 0.10.1 or newer.
+2. Either subscribe to [Ruinarch+ on the Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3811868047) (Steam keeps it up to date), or download `RuinarchPlus-<version>.zip` from the [releases](https://github.com/Xm0x/RuinarchMods/releases) and unzip it into your game's `Mods/` folder, so you get `Mods/RuinarchPlus/`. Use one or the other: when both are present, the local copy wins.
 3. Launch. Check `Mods/mods.log`; you should see a line like:
    ```
    [ruinarch.plus] Applied N patch class(es) over M method(s): ...

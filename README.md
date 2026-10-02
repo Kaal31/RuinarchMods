@@ -54,6 +54,9 @@ RuinarchDebug/
   AutoTest.cs                unattended in-game test harness
   TemplateSuite.cs           template export, rebuilding, packs and native construction checks
   PlusBridge.cs              reaches Ruinarch+ by reflection (no hard dependency)
+tools/
+  publish-workshop.sh        uploads a mod as a new version of its Steam Workshop item
+  WorkshopPublish/           the one-launch game tool that script installs
 ARCHITECTURE.md              how the three repos fit together
 ```
 
@@ -83,5 +86,24 @@ bring an eligible resident home if needed; gossip fixtures start with two factio
 maintain the meeting until the native sighting occurs. The migration corpse check compares
 gains with and without one body, so earlier deaths do not invalidate it. Full runs remain
 the release gate.
+
+## Releasing on the Steam Workshop
+
+Ruinarch+ is also published as Workshop item
+[3811868047](https://steamcommunity.com/sharedfiles/filedetails/?id=3811868047). Each
+release uploads the new version there too:
+
+```bash
+tools/publish-workshop.sh RuinarchPlus 3811868047 "Ruinarch+ 0.10.1: <what changed>"
+```
+
+The script builds the mod into a clean folder (the DLL, `mod.json`, `README.md` and any
+`art/`, `audio/` or `bundles/`, never a player's `config.json`), then starts Ruinarch
+through Steam once with a small release tool installed. That tool uploads the folder through
+the game's own Steam session, which needs no password, writes the result and quits. Only
+the files and the change note change; the title, description, images and visibility stay
+as they were set on the item's Steam page. It needs Steam running and logged in as the
+item's owner, the game closed, and the RuinarchModLoader checkout next to this repo (or
+`RUIN_LOADER_DIR`), built and installed in the game.
 
 This repo holds source only: no game binaries or assets.
