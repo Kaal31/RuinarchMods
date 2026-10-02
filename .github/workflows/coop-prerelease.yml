@@ -1,0 +1,69 @@
+name: Publish co-op prerelease
+
+on:
+  push:
+    branches: [coop-world-transfer]
+    paths:
+      - .github/workflows/coop-prerelease.yml
+      - downloads/RuinarchCoop-0.1.0.zip
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coop-prerelease
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/coop-world-transfer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: coop-v0.1.0-preview
+      ZIP: downloads/RuinarchCoop-0.1.0.zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify compiled package
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "68d865a7e843c3e6a9f055c696fb54ad071c8fe28777edce7b488cb2f465fc80  $ZIP" | sha256sum --check
+          python3 - <<'PY'
+          import json, zipfile, os
+          with zipfile.ZipFile(os.environ["ZIP"]) as z:
+              assert z.testzip() is None
+              assert "RuinarchCoop/RuinarchCoop.dll" in z.namelist()
+              assert z.read("RuinarchCoop/RuinarchCoop.dll")[:2] == b"MZ"
+              m = json.loads(z.read("RuinarchCoop/mod.json").decode("utf-8-sig"))
+              assert m["loader"] == "RuinarchModLoader" and m["loaderApi"] == 1
+              assert m["entryAssembly"] == "RuinarchCoop.dll"
+              assert m["entryType"] == "RuinarchCoop.CoopMod"
+          PY
+          sha256sum "$ZIP" > RuinarchCoop-0.1.0.zip.sha256
+      - name: Publish prerelease with installable ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## Co-op world-transfer preview
+          Download **RuinarchCoop-0.1.0.zip** under Assets, not the automatically generated source archives.
+
+          Install RuinarchModLoader separately, then extract the ZIP into Ruinarch's Mods folder on both PCs. Confirm that Mods/RuinarchCoop/mod.json and Mods/RuinarchCoop/RuinarchCoop.dll sit together. Restart the game.
+
+          This package includes the compiled DLL and loader API 1 manifest. The host transfers a saved world to the guest; both worlds remain paused, with independent cameras. Live simulation replication and guest abilities are not implemented.
+
+          Both PCs need matching game/mod versions and configuration. Steam Deck/Proton gameplay and a two-PC game session remain unverified.
+
+          Validation: loader package accepted, nine game patch targets checked, and 12 transport tests passed including a local TCP transfer.
+          NOTES
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Co-op World Transfer Preview 0.1.0" --notes-file release-notes.md --draft --prerelease --latest=false
+          fi
+          gh release upload "$RELEASE_TAG" "$ZIP" RuinarchCoop-0.1.0.zip.sha256 --clobber
+          gh release edit "$RELEASE_TAG" --title "Co-op World Transfer Preview 0.1.0" --notes-file release-notes.md --prerelease --draft=false --latest=false
